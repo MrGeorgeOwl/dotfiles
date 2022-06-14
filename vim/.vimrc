@@ -1,7 +1,10 @@
 :set number
 :syntax on
 :colorscheme gruvbox
-set guifont=JetBrains\ Mono\ NL\ 36 
+set relativenumber
+set nohlsearch
+set hidden
+
 filetype plugin on
 
 call plug#begin()
