@@ -21,6 +21,11 @@ Plug 'preservim/nerdtree'
 Plug 'gruvbox-community/gruvbox'
 call plug#end()
 
+"" Netrw file explorer settings
+let g:netrw_banner = 0 "" hide banner above files list
+let g:netrw_liststyle = 3 "" tree instead of plain views
+let g:netrw_browse_split = 3 "" open file in a new tab
+
 colorscheme gruvbox
 
 lua << EOF
