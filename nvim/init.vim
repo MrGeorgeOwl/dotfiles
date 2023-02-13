@@ -1,3 +1,4 @@
+set mouse=a
 set number
 syntax on
 set relativenumber
@@ -34,8 +35,7 @@ call plug#end()
 
 "" Netrw file explorer settings
 let g:netrw_banner = 0 "" hide banner above files list
-let g:netrw_liststyle = 3 "" tree instead of plain views
-let g:netrw_browse_split = 3 "" open file in a new tab
+let g:netrw_liststyle = 3 " tree instead of plain views
 
 colorscheme gruvbox
 
@@ -116,7 +116,7 @@ local on_attach = function(client, bufnr)
   -- See `:help vim.lsp.*` for documentation on any of the below functions
   buf_set_keymap('n', 'gD', '<cmd>lua vim.lsp.buf.declaration()<CR>', opts)
   buf_set_keymap('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<CR>', opts)
-  buf_set_keymap('n', 'K', '<cmd>lua vim.lsp.buf.hover()<CR>', opts)
+  buf_set_keymap('n', '<C-K>', '<cmd>lua vim.lsp.buf.hover()<CR>', opts)
   buf_set_keymap('n', 'gi', '<cmd>lua vim.lsp.buf.implementation()<CR>', opts)
   buf_set_keymap('n', '<C-k>', '<cmd>lua vim.lsp.buf.signature_help()<CR>', opts)
   buf_set_keymap('n', '<space>wa', '<cmd>lua vim.lsp.buf.add_workspace_folder()<CR>', opts)
@@ -156,3 +156,5 @@ EOF
 nnoremap ,ff <cmd>Telescope find_files<cr>
 nnoremap ,fg <cmd>Telescope live_grep<cr>
 
+" Remove hated Shift + k help doc
+map <S-k> <Nop>
