@@ -1,0 +1,10 @@
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+[user]
+	name = Heorhi Parkhomenka
+	email = heorhi.parkhomenka@lseg.com
+[alias]
+        nmr = "!f() { git push -u origin $(git branch --show-current);}; f"
