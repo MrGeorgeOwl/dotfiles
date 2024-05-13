@@ -5,6 +5,6 @@
 	process = git-lfs filter-process
 [user]
 	name = Heorhi Parkhomenka
-	email = heorhi.parkhomenka@lseg.com
+	email = parhomenkogeorge@gmail.com
 [alias]
-        nmr = "!f() { git push -u origin $(git branch --show-current);}; f"
+    nmr = "!f() { git push -u origin $(git branch --show-current);}; f"
