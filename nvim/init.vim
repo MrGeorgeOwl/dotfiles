@@ -9,7 +9,7 @@ set scrolloff=999
 set colorcolumn=110
 set updatetime=100
 "" remove autoindent when typing ":"
-set indentkeys=
+set indentkeys-=:
 
 filetype plugin on
 set tabstop=4
@@ -112,7 +112,7 @@ lua << EOF
   -- Use a loop to conveniently call 'setup' on multiple servers and
   -- map buffer local keybindings when the language server attaches
   local lsp = require('lspconfig')
-  local servers = { 'pyright', 'gopls' }
+  local servers = { 'pyright' }
   local capabilities = require('cmp_nvim_lsp').default_capabilities()
   
   for _, server in ipairs(servers) do
