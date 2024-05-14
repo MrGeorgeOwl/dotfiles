@@ -13,7 +13,7 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
  
 # install required packages
 brew update && \
-    brew install neovim pyenv node coreutils ripgrep && \
+    brew install neovim pyenv node coreutils ripgrep xz && \
     brew install --cask warp
 
 # install Jetbrains Mono font
