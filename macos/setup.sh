@@ -15,7 +15,11 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 brew update && \
     brew install neovim pyenv node coreutils ripgrep && \
     brew install --cask warp
- 
+
+# install Jetbrains Mono font
+brew tap homebrew/cask-fonts
+brew install --cask font-jetbrains-mono 
+
 # install pyright
 npm i -g pyright
 
