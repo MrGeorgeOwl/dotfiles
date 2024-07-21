@@ -8,8 +8,6 @@ set incsearch
 set scrolloff=999
 set colorcolumn=110
 set updatetime=100
-"" remove autoindent when typing ":"
-set indentkeys-=:
 
 filetype plugin on
 set tabstop=4
@@ -20,6 +18,7 @@ call plug#begin()
 Plug 'neovim/nvim-lspconfig'
 Plug 'preservim/nerdtree'
 Plug 'gruvbox-community/gruvbox'
+Plug 'catppuccin/nvim', { 'as': 'catppuccin' }
 
 "" Git
 Plug 'tpope/vim-fugitive'
@@ -42,7 +41,7 @@ let g:netrw_banner = 0 "" hide banner above files list
 let g:netrw_liststyle = 3 "" tree instead of plain views
 
 "" Colorscheme
-colorscheme gruvbox
+colorscheme catppuccin-mocha
 
 lua << EOF
   -- Set completeopt to have a better completion experience
@@ -112,7 +111,7 @@ lua << EOF
   -- Use a loop to conveniently call 'setup' on multiple servers and
   -- map buffer local keybindings when the language server attaches
   local lsp = require('lspconfig')
-  local servers = { 'pyright' }
+  local servers = { 'pyright', 'rust_analyzer' }
   local capabilities = require('cmp_nvim_lsp').default_capabilities()
   
   for _, server in ipairs(servers) do
@@ -213,6 +212,21 @@ lua << EOF
         map({'o', 'x'}, 'ih', ':<C-U>Gitsigns select_hunk<CR>')
       end
     }
+
+    -- Autoformat
+    vim.api.nvim_create_augroup("AutoFormat", {})
+
+    vim.api.nvim_create_autocmd(
+        "BufWritePost",
+        {
+            pattern = "*.py",
+            group = "AutoFormat",
+            callback = function()
+                vim.cmd("silent !ruff format --quiet %")
+                vim.cmd("edit")
+            end,
+        }
+    )
 EOF
 
 "" Telescope bindings
