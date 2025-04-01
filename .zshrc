@@ -41,8 +41,6 @@ autoload -U compinit && compinit
 
 # Keybindings
 # alt+<- | alt+->
-bindkey "^[[1;3C" forward-word
-bindkey "^[[1;3D" backward-word
 bindkey '^p' history-search-backward
 bindkey '^n' history-search-forward
 bindkey "^r" history-incremental-pattern-search-backward
@@ -78,9 +76,6 @@ alias gd="git diff"
 alias gl="git log"
 alias gsh="git show"
 
-alias brew86="arch -x86_64 /usr/local/bin/brew"
-alias pyenv86="arch -x86_64 pyenv"
-
 ## kubernetes 
 alias kcc="k config use-context"
 alias kgc="k config get-contexts"
@@ -91,48 +86,7 @@ alias kgd="k get deployments"
 
 
 # Exports
-export PATH="/opt/homebrew/opt/sqlite/bin:$PATH"
-export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
-export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"
-export HOMEBREW_NO_AUTO_UPDATE=1
-export BAT_PAGING='never'
-
-# pyenv
-export PYENV_ROOT="$HOME/.pyenv"
-[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
-
-# Java
-JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk-11.jdk/Contents/Home" 
-JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk-11.jdk/Contents/Home" 
-[[ "$PATH" == *"$HOME/bin:"* ]] || export PATH="$HOME/bin:$PATH"
-
-
-export PATH="/opt/homebrew/opt/swagger-codegen@2/bin:$PATH"
-
-
-# >>> conda initialize >>>
-# !! Contents within this block are managed by 'conda init' !!
-# __conda_setup="$('/usr/local/anaconda3/bin/conda' 'shell.zsh' 'hook' 2> /dev/null)"
-# if [ $? -eq 0 ]; then
-#     eval "$__conda_setup"
-# else
-#     if [ -f "/usr/local/anaconda3/etc/profile.d/conda.sh" ]; then
-#         . "/usr/local/anaconda3/etc/profile.d/conda.sh"
-#     else
-#         export PATH="/usr/local/anaconda3/bin:$PATH"
-#     fi
-# fi
-# unset __conda_setup
-# <<< conda initialize <<<
-
-
-# Created by `pipx` on 2024-06-06 11:36:17
-export PATH="$PATH:/Users/heorhi/.local/bin"
 
 # Fixing terminal colors in tmux
 export TERM=xterm-256color
 export COLORTERM=truecolor
-! { which werf | grep -qsE "^/Users/heorhi/.trdl/"; } && [[ -x "$HOME/bin/trdl" ]] && source $("$HOME/bin/trdl" use werf "1.2" "stable")
