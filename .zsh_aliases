@@ -1,0 +1,5 @@
+alias g="git"
+alias nv="nvim"
+alias ls="ls --color"
+alias ll="ls -la"
+alias xclip="xclip -selection clipboard"
