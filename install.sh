@@ -1,5 +1,5 @@
 sudo apt-get update
-sudo apt-get install git xclip btop tree fzf tar unzip zsh curl -y
+sudo apt-get install git xclip btop tree fzf tar unzip zsh curl nvm -y
 snap install spotify
 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
