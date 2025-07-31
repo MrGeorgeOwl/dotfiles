@@ -15,4 +15,6 @@ vim.opt.scrolloff = 15
 
 vim.opt.updatetime = 50
 
+vim.opt.termguicolors = true
+
 vim.opt.colorcolumn = "119"
