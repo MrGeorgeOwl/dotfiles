@@ -30,6 +30,7 @@ zinit snippet OMZP::python
 autoload -U compinit && compinit
 
 # Keybindings
+bindkey -v
 # alt+<- | alt+->
 bindkey "^[[1;3C" forward-word
 bindkey "^[[1;3D" backward-word
@@ -78,6 +79,7 @@ export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
 export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
 export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"
+export PATH="/Users/heorhi/scripts:$PATH"
 export HOMEBREW_NO_AUTO_UPDATE=1
 export BAT_PAGING='never'
 
