@@ -1,0 +1,14 @@
+anchor=top-right
+font=Terminess Nerd Font 14, Noto Color Emoji 14
+text-color=#eaeaea
+border-color=#eaeaea
+background-color=#2c323b
+border-size=2
+border-radius=5
+padding=10,15
+margin=10
+outer-margin=20
+default-timeout=5000
+ignore-timeout=0
+width=420
+max-icon-size=32
