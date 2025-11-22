@@ -7,3 +7,6 @@
     last = log -1 HEAD
 [push]
 	autoSetupRemote = true
+[user]
+	email = parhomenkogeorge@gmail.com
+	name = Heorhi Parkhomenka
