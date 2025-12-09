@@ -1,0 +1,30 @@
+{
+  "layer": "top",
+  "position": "top",
+  "margin-bottom": -10,
+  "spacing": 0,
+
+  "modules-left": [
+    "hyprland/workspaces",
+  ],
+
+  "modules-center": ["clock"],
+
+  "modules-right": [
+    "bluetooth",
+    "network",
+    "pulseaudio",
+    "cpu"
+  ],
+
+  "hyprland/workspaces": {
+    "format": "{icon}",
+    "format-icons": {
+      "active": " ",
+      "default": "",
+    },
+    "persistent-workspaces": {
+        "*": 5,
+    },
+  },
+}
