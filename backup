@@ -1,0 +1,100 @@
+# GPU
+sudo pacman -S mesa \
+	lib32-mesa \
+	vulkan-radeon \
+	lib32-vulkan-radeon \
+	libva-mesa-driver \
+	lib32-libva-mesa-driver \
+	mesa-vdpau \
+	lib32-mesa-vdpau \
+	mesa-utils pciutils vulkan-tools
+
+# Audio
+sudo pacman -S pipewire \
+	pipewire-alsa \
+	pipewire-pulse \
+	pipewire-jack \
+	wireplumber \
+	pavucontrol \
+	alsa-utils
+
+# Desktop & utilities
+sudo pacman -S hyprland \
+	xdg-desktop-portal-hyprland \
+	qt5-wayland \
+	qt6-wayland \
+	alacritty \
+	waybar \
+	wofi \
+	mako \
+	grim \
+	slurp \
+	wl-clipboard \
+	polkit-kde-agent \
+	ttf-nerd-fonts-symbols ttf-nerd-fonts-symbols-mono ttf-jetbrains-mono-nerd
+
+# Bluetooth
+sudo pacman -S bluez bluez-utils blueman
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
+sudo usermod -aG lp $USER
+
+# Display manager
+sudo pacman -S sddm
+
+# utilities for .zshrc
+sudo pacman -S zsh nvm cargo starship zoxide uv unzip
+
+# utilities and applications goes here
+sudo pacman -S \
+    htop \
+    dolphin \
+    git \
+    firefox \
+    openssh \
+    bat \
+    hyprpaper \
+    tmux \
+    libreoffice-still \
+    discord \
+    less \
+    steam \
+    telegram-desktop \
+    noto-fonts-emoji \
+    man \
+    vlc \
+    wget \
+    docker \
+    docker-compose \
+    gwenview \
+    ark \
+    inter-font \
+    ttf-noto-nerd \
+    noto-fonts \
+    noto-fonts-cjk \
+    noto-fonts-extra \
+    ttf-cascadia-mono-nerd \
+    libsecret \
+    impala
+
+# Install yay
+sudo pacman -S --needed git base-devel \
+    && git clone https://aur.archlinux.org/yay.git \
+    && cd yay \
+    && makepkg -si
+
+sudo usermod -aG docker $USER
+yay -S pinta \
+    spotify \
+
+# TODO: how to install nordvpn-gui nordvpn ?
+
+# ssh keys
+ssh-keygen -t ed25519 -C "parhomenkogeorge@gmail.com"
+
+eval "$(ssh-agent -s)"
+
+ssh-add ~/.ssh/id_ed25519
+
+# take a screenshot
+grim -g "$(slurp)" ~/Pictures/screenshot_$(date +%Y%m%d_%H%M%S).png
