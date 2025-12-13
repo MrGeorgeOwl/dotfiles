@@ -1,5 +1,5 @@
 * {
-  font-family: 'Terminess Nerd Font', sans-serif;
+  font-family: 'Terminess Nerd Font';
   font-size: 16px;
   min-height: 0;
   padding-right: 0px;
@@ -7,7 +7,6 @@
   padding-bottom: 0px;
 }
 
-/* --- Waybar Container --- */
 #waybar {
   background: transparent;
   color: #eaeaea;
@@ -17,10 +16,9 @@
 
 #workspaces {
   padding: 2px;
-  margin-left: 7px; /* Margin from the far left edge */
-  margin-right: 7px; /* Spacing after the workspaces module */
+  margin-left: 7px;
+  margin-right: 7px;
   color: #ffffff;
-  /* #2c323b -- background color */
 }
 
 #workspaces button {
@@ -38,19 +36,18 @@
   background-color: #2c323b;
   padding: 0.3rem 0.7rem;
   margin: 5px 2px;
-  border-radius: 6px; /* This module is always rounded */
+  border-radius: 6px;
   box-shadow: 0 1px 3px rgba(153, 209, 219, 0.2);
   min-width: 0;
   border: none;
   transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 
-
-/* Right block */
 #bluetooth,
 #network,
 #pulseaudio,
-#cpu {
+#cpu,
+#language {
   background-color: #2c323b;
   padding: 0.3rem 0.7rem;
   margin: 5px 5px; 

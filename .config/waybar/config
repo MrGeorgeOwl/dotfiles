@@ -14,7 +14,8 @@
     "bluetooth",
     "network",
     "pulseaudio",
-    "cpu"
+    "cpu",
+    "hyprland/language",
   ],
 
   "hyprland/workspaces": {
@@ -27,4 +28,10 @@
         "*": 5,
     },
   },
+
+  "hyprland/language": {
+    "format": "{}",
+    "format-en": "US",
+    "format-ru": "RU",
+  }
 }
