@@ -75,7 +75,11 @@ sudo pacman -S \
     noto-fonts-extra \
     ttf-cascadia-mono-nerd \
     libsecret \
-    impala
+    impala \
+    kwallet \
+    kwalletmanager \
+    kwallet-pam \
+    bluetui
 
 # Install yay
 sudo pacman -S --needed git base-devel \
@@ -85,5 +89,4 @@ sudo pacman -S --needed git base-devel \
 
 sudo usermod -aG docker $USER
 yay -S pinta \
-    spotify \
-
+    spotify
