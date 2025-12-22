@@ -87,14 +87,3 @@ sudo usermod -aG docker $USER
 yay -S pinta \
     spotify \
 
-# TODO: how to install nordvpn-gui nordvpn ?
-
-# ssh keys
-ssh-keygen -t ed25519 -C "parhomenkogeorge@gmail.com"
-
-eval "$(ssh-agent -s)"
-
-ssh-add ~/.ssh/id_ed25519
-
-# take a screenshot
-grim -g "$(slurp)" ~/Pictures/screenshot_$(date +%Y%m%d_%H%M%S).png
