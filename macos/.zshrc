@@ -1,6 +1,3 @@
-# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-# Initialization code that may require console input (password prompts, [y/n]
-# confirmations, etc.) must go above this block; everything else may go below.
 if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='vim'
 else
@@ -30,8 +27,8 @@ zinit snippet OMZP::python
 autoload -U compinit && compinit
 
 # Keybindings
-bindkey -v
 # alt+<- | alt+->
+bindkey -v
 bindkey "^[[1;3C" forward-word
 bindkey "^[[1;3D" backward-word
 bindkey '^p' history-search-backward
