@@ -18,5 +18,3 @@ vim.opt.updatetime = 50
 vim.opt.termguicolors = true
 
 vim.opt.colorcolumn = "119"
-
-vim.opt.autoread = true
