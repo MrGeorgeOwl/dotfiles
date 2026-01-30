@@ -1,0 +1,159 @@
+# Get editor completions based on the config schema
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# Inserts a blank line between shell prompts
+add_newline = true
+
+# Character prompt (success/error indicator)
+[character]
+success_symbol = '[❯](bold green)'
+error_symbol = '[❯](bold red)'
+
+# Directory
+[directory]
+style = 'bold white'
+truncation_length = 3
+truncate_to_repo = true
+format = '[$path]($style) '
+
+# Git Branch
+[git_branch]
+style = 'bold white'
+format = 'on [$branch]($style) '
+
+# Git Status
+[git_status]
+style = 'bold white'
+format = '([$all_status$ahead_behind]($style) )'
+
+# Git State (rebasing, merging, etc.)
+[git_state]
+style = 'bold white'
+
+# Command duration
+[cmd_duration]
+style = 'bold black'
+format = 'took [$duration]($style) '
+
+# Python - GREEN
+[python]
+symbol = '🐍 '
+style = 'bold green'
+format = 'via [$symbol$version]($style) (\($virtualenv\)) '
+detect_extensions = ['py']
+detect_files = ['.python-version', 'Pipfile', 'pyproject.toml', 'requirements.txt', 'setup.py', 'tox.ini']
+
+# Go (Golang) - BLUE
+[golang]
+symbol = '🐹 '
+style = 'bold blue'
+format = 'via [$symbol$version]($style) '
+
+# Rust - ORANGE
+[rust]
+symbol = '🦀 '
+style = 'bold #FF8700'  # Orange color
+format = 'via [$symbol$version]($style) '
+
+# Node.js - Black/White
+[nodejs]
+symbol = ' '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# Java - Black/White
+[java]
+symbol = '☕ '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# C - Black/White
+[c]
+symbol = 'C '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# Ruby - Black/White
+[ruby]
+symbol = '💎 '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# PHP - Black/White
+[php]
+symbol = '🐘 '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# Elixir - Black/White
+[elixir]
+symbol = '💧 '
+style = 'bold white'
+format = 'via [$symbol$version]($style) '
+
+# Docker Context - Black/White
+[docker_context]
+symbol = '🐳 '
+style = 'bold white'
+format = 'via [$symbol$context]($style) '
+
+# Kubernetes - Black/White
+[kubernetes]
+symbol = '⎈ '
+style = 'bold white'
+format = '[$symbol$context( \($namespace\))]($style) '
+disabled = true
+
+# AWS - Black/White
+[aws]
+symbol = '☁️ '
+style = 'bold white'
+format = 'on [$symbol($profile )(\($region\))]($style) '
+disabled = true
+show_always = false
+
+# Package Version - Black/White
+[package]
+symbol = '📦 '
+style = 'bold white'
+format = 'is [$symbol$version]($style) '
+show_always = false
+disabled = true
+
+# Time - Black/White
+[time]
+disabled = true
+style = 'bold white'
+format = 'at [$time]($style) '
+
+# Username - Black/White
+[username]
+style_user = 'bold white'
+style_root = 'bold red'
+format = '[$user]($style) '
+disabled = false
+show_always = false
+
+# Hostname - Black/White
+[hostname]
+ssh_only = true
+style = 'bold white'
+format = 'on [$hostname]($style) '
+disabled = false
+
+# Battery
+[battery]
+full_symbol = '🔋'
+charging_symbol = '⚡️'
+discharging_symbol = '💀'
+disabled = true
+
+# Status
+[status]
+style = 'bold red'
+format = '[\[$status\]]($style) '
+disabled = true
+
+# Line break
+[line_break]
+disabled = false
