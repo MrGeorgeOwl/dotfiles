@@ -39,10 +39,9 @@ format = 'took [$duration]($style) '
 [python]
 symbol = '🐍 '
 style = 'bold green'
-format = 'via [$symbol$version]($style) '
+format = 'via [$symbol$version]($style) (\($virtualenv\)) '
 detect_extensions = ['py']
 detect_files = ['.python-version', 'Pipfile', 'pyproject.toml', 'requirements.txt', 'setup.py', 'tox.ini']
-pyversion_file_format = ''
 
 # Go (Golang) - BLUE
 [golang]
@@ -71,12 +70,6 @@ format = 'via [$symbol$version]($style) '
 # C - Black/White
 [c]
 symbol = 'C '
-style = 'bold white'
-format = 'via [$symbol$version]($style) '
-
-# C++ - Black/White
-[cpp]
-symbol = 'C++ '
 style = 'bold white'
 format = 'via [$symbol$version]($style) '
 
@@ -124,6 +117,8 @@ show_always = false
 symbol = '📦 '
 style = 'bold white'
 format = 'is [$symbol$version]($style) '
+show_always = false
+disabled = true
 
 # Time - Black/White
 [time]
