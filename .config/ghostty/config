@@ -1,0 +1,9 @@
+theme = miasma
+font-family = "JetBrains Mono"
+font-size = 18
+
+background-opacity = 1
+shell-integration = "zsh"
+cursor-style-blink = false
+cursor-style = block
+shell-integration-features = no-cursor
