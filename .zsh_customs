@@ -10,6 +10,7 @@ theme-switch() {
   local btop_themes="$HOME/.config/btop/themes"
   local btop_conf="$HOME/.config/btop/btop.conf"
   local nvim_plugins="$HOME/.config/nvim/lua/heorhi/plugins"
+  local nvim_themes="$HOME/.config/nvim/lua/heorhi/themes"
 
   # Ghostty — copy theme to current, then live-reload
   if [[ -f "$ghostty_themes/$theme" ]]; then
@@ -31,8 +32,8 @@ theme-switch() {
   fi
 
   # neovim — copy theme spec, requires nvim restart
-  if [[ -f "$nvim_plugins/colorscheme-$theme.lua" ]]; then
-    cp "$nvim_plugins/colorscheme-$theme.lua" "$nvim_plugins/colorscheme.lua"
+  if [[ -f "$nvim_themes/$theme.lua" ]]; then
+    cp "$nvim_themes/$theme.lua" "$nvim_plugins/colorscheme.lua"
     echo "neovim: $theme (restart nvim to apply)"
   else
     echo "neovim: '$theme' not found, skipping"
