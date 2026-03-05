@@ -1,5 +1,15 @@
-alias g="git"
-alias nv="nvim"
 alias ls="ls --color"
 alias ll="ls -la"
+
 alias d="docker"
+alias g="git"
+alias nv="nvim"
+alias k="kubectl"
+
+alias kcc="k config use-context"
+alias kgc="k config get-contexts"
+alias kcn="k config set-context --current --namespace"
+alias kgp="k get pods"
+alias kgn="k get namespaces"
+alias kgd="k get deployments"
+
