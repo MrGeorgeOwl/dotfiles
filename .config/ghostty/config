@@ -1,4 +1,4 @@
-theme = miasma
+config-file = ?"~/.config/ghostty/themes/current"
 font-family = "JetBrains Mono"
 font-size = 18
 

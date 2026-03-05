@@ -48,6 +48,5 @@ eval "$(zoxide init zsh)"
 # Alias definitions.
 # You may want to put all your additions into a separate file like
 # ~/.bash_aliases, instead of adding them here directly.
-if [ -f ~/.zsh_aliases ]; then
-    . ~/.zsh_aliases
-fi
+if [ -f ~/.zsh_aliases ]; then . ~/.zsh_aliases; fi
+if [ -f ~/.zsh_customs ]; then . ~/.zsh_customs; fi

@@ -1,0 +1,40 @@
+theme-switch() {
+  local theme="$1"
+
+  if [[ -z "$theme" ]]; then
+    echo "Usage: theme-switch <theme-name>"
+    return 1
+  fi
+
+  local ghostty_themes="$HOME/.config/ghostty/themes"
+  local btop_themes="$HOME/.config/btop/themes"
+  local btop_conf="$HOME/.config/btop/btop.conf"
+  local nvim_plugins="$HOME/.config/nvim/lua/heorhi/plugins"
+
+  # Ghostty — copy theme to current, then live-reload
+  if [[ -f "$ghostty_themes/$theme" ]]; then
+    cp "$ghostty_themes/$theme" "$ghostty_themes/current"
+    if pgrep -x ghostty >/dev/null 2>&1; then
+      killall -SIGUSR2 ghostty
+    fi
+    echo "ghostty: $theme"
+  else
+    echo "ghostty: '$theme' not found, skipping"
+  fi
+
+  # btop — update config, requires restart to take effect
+  if [[ -f "$btop_themes/$theme.theme" ]]; then
+    perl -i -pe "s|^color_theme = .*|color_theme = \"$btop_themes/$theme.theme\"|" "$btop_conf"
+    echo "btop: $theme"
+  else
+    echo "btop: '$theme' not found, skipping"
+  fi
+
+  # neovim — copy theme spec, requires nvim restart
+  if [[ -f "$nvim_plugins/colorscheme-$theme.lua" ]]; then
+    cp "$nvim_plugins/colorscheme-$theme.lua" "$nvim_plugins/colorscheme.lua"
+    echo "neovim: $theme (restart nvim to apply)"
+  else
+    echo "neovim: '$theme' not found, skipping"
+  fi
+}
