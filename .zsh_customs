@@ -1,18 +1,14 @@
-theme-switch() {
+# Theme brightness mapping: dark or light
+typeset -A THEME_BRIGHTNESS
+THEME_BRIGHTNESS=(
+  miasma dark
+  latch  light
+)
+
+_theme_ghostty() {
   local theme="$1"
-
-  if [[ -z "$theme" ]]; then
-    echo "Usage: theme-switch <theme-name>"
-    return 1
-  fi
-
   local ghostty_themes="$HOME/.config/ghostty/themes"
-  local btop_themes="$HOME/.config/btop/themes"
-  local btop_conf="$HOME/.config/btop/btop.conf"
-  local nvim_plugins="$HOME/.config/nvim/lua/heorhi/plugins"
-  local nvim_themes="$HOME/.config/nvim/lua/heorhi/themes"
 
-  # Ghostty — copy theme to current, then live-reload
   if [[ -f "$ghostty_themes/$theme" ]]; then
     cp "$ghostty_themes/$theme" "$ghostty_themes/current"
     if pgrep -x ghostty >/dev/null 2>&1; then
@@ -22,20 +18,68 @@ theme-switch() {
   else
     echo "ghostty: '$theme' not found, skipping"
   fi
+}
 
-  # btop — update config, requires restart to take effect
+_theme_btop() {
+  local theme="$1"
+  local btop_themes="$HOME/.config/btop/themes"
+  local btop_conf="$HOME/.config/btop/btop.conf"
+
   if [[ -f "$btop_themes/$theme.theme" ]]; then
     perl -i -pe "s|^color_theme = .*|color_theme = \"$btop_themes/$theme.theme\"|" "$btop_conf"
     echo "btop: $theme"
   else
     echo "btop: '$theme' not found, skipping"
   fi
+}
 
-  # neovim — copy theme spec, requires nvim restart
+_theme_nvim() {
+  local theme="$1"
+  local nvim_plugins="$HOME/.config/nvim/lua/heorhi/plugins"
+  local nvim_themes="$HOME/.config/nvim/lua/heorhi/themes"
+
   if [[ -f "$nvim_themes/$theme.lua" ]]; then
     cp "$nvim_themes/$theme.lua" "$nvim_plugins/colorscheme.lua"
     echo "neovim: $theme (restart nvim to apply)"
   else
     echo "neovim: '$theme' not found, skipping"
   fi
+}
+
+_theme_claude() {
+  local theme="$1"
+  local brightness="${THEME_BRIGHTNESS[$theme]}"
+  local claude_settings="$HOME/.claude/settings.json"
+
+  if [[ -z "$brightness" ]]; then
+    echo "claude: no brightness mapping for '$theme', skipping"
+    return
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    echo "claude: jq not found, skipping"
+    return
+  fi
+
+  if [[ -f "$claude_settings" ]]; then
+    local tmp="$(mktemp)"
+    jq --arg b "$brightness" '.theme = $b' "$claude_settings" > "$tmp" && mv "$tmp" "$claude_settings"
+    echo "claude: $brightness"
+  else
+    echo "claude: settings.json not found, skipping"
+  fi
+}
+
+theme-switch() {
+  local theme="$1"
+
+  if [[ -z "$theme" ]]; then
+    echo "Usage: theme-switch <theme-name>"
+    return 1
+  fi
+
+  _theme_ghostty "$theme"
+  _theme_btop "$theme"
+  _theme_nvim "$theme"
+  _theme_claude "$theme"
 }
