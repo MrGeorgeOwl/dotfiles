@@ -1,9 +1,21 @@
-# Theme brightness mapping: dark or light
-typeset -A THEME_BRIGHTNESS
-THEME_BRIGHTNESS=(
-  miasma dark
-  latch  light
+typeset -A THEME_WALLPAPERS
+THEME_WALLPAPERS=(
+  dayfox 01-coffee.jpg
+  miasma 0-nature-of-fear.png
+  latch latch-2.png
 )
+
+_theme_wallpaper() {
+  local theme="$1"
+  local wallpaper="${THEME_WALLPAPERS[$theme]}"
+
+  if [[ "$OSTYPE" == darwin* ]]; then
+    if [[ -n "$wallpaper" ]]; then
+      osascript -e "tell application \"Finder\" to set desktop picture to POSIX file \"$HOME/Wallpapers/$wallpaper\""
+      echo "wallpaper: $wallpaper"
+    fi
+  fi
+}
 
 _theme_ghostty() {
   local theme="$1"
@@ -57,4 +69,5 @@ theme-switch() {
   _theme_ghostty "$theme"
   _theme_btop "$theme"
   _theme_nvim "$theme"
+  _theme_wallpaper "$theme"
 }
