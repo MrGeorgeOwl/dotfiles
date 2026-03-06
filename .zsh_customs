@@ -46,30 +46,6 @@ _theme_nvim() {
   fi
 }
 
-_theme_claude() {
-  local theme="$1"
-  local brightness="${THEME_BRIGHTNESS[$theme]}"
-  local claude_settings="$HOME/.claude/settings.json"
-
-  if [[ -z "$brightness" ]]; then
-    echo "claude: no brightness mapping for '$theme', skipping"
-    return
-  fi
-
-  if ! command -v jq &>/dev/null; then
-    echo "claude: jq not found, skipping"
-    return
-  fi
-
-  if [[ -f "$claude_settings" ]]; then
-    local tmp="$(mktemp)"
-    jq --arg b "$brightness" '.theme = $b' "$claude_settings" > "$tmp" && mv "$tmp" "$claude_settings"
-    echo "claude: $brightness"
-  else
-    echo "claude: settings.json not found, skipping"
-  fi
-}
-
 theme-switch() {
   local theme="$1"
 
@@ -81,5 +57,4 @@ theme-switch() {
   _theme_ghostty "$theme"
   _theme_btop "$theme"
   _theme_nvim "$theme"
-  _theme_claude "$theme"
 }
