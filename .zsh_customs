@@ -11,7 +11,13 @@ _theme_wallpaper() {
 
   if [[ "$OSTYPE" == darwin* ]]; then
     if [[ -n "$wallpaper" ]]; then
-      osascript -e "tell application \"Finder\" to set desktop picture to POSIX file \"$HOME/Wallpapers/$wallpaper\""
+      swift - << EOF
+import AppKit
+let url = URL(fileURLWithPath: "$HOME/Wallpapers/$wallpaper")
+for screen in NSScreen.screens {
+    try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
+}
+EOF
       echo "wallpaper: $wallpaper"
     fi
   fi
