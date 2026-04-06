@@ -26,16 +26,24 @@ EOF
 _theme_ghostty() {
   local theme="$1"
   local ghostty_themes="$HOME/.config/ghostty/themes"
+  local ghostty_service="app-com.mitchellh.ghostty.service"
 
-  if [[ -f "$ghostty_themes/$theme" ]]; then
-    cp "$ghostty_themes/$theme" "$ghostty_themes/current"
-    if pgrep -x ghostty >/dev/null 2>&1; then
-      killall -SIGUSR2 ghostty
-    fi
-    echo "ghostty: $theme"
-  else
+  if [[ ! -f "$ghostty_themes/$theme" ]]; then
     echo "ghostty: '$theme' not found, skipping"
+    return 0
   fi
+
+  cp "$ghostty_themes/$theme" "$ghostty_themes/current"
+
+  if pgrep -x ghostty >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user --quiet is-active "$ghostty_service"; then
+      systemctl reload --user "$ghostty_service"
+    else
+      pkill -USR2 -x ghostty
+    fi
+  fi
+
+  echo "ghostty: $theme"
 }
 
 _theme_btop() {
