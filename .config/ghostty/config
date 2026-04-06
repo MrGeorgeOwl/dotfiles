@@ -1,6 +1,6 @@
 config-file = ?"~/.config/ghostty/themes/current"
 font-family = "JetBrains Mono"
-font-size = 18
+font-size = 16
 
 background-opacity = 1
 shell-integration = "zsh"
