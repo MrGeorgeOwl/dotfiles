@@ -33,7 +33,7 @@ bindkey '^N' down-line-or-beginning-search
 bindkey '^R' history-incremental-search-backward
 # end history
 
-bindkey -e
+bindkey -v
 
 # The following lines were added by compinstall
 zstyle :compinstall filename '/home/owl/.zshrc'
