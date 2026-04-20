@@ -1,25 +1,55 @@
 typeset -A THEME_WALLPAPERS
 THEME_WALLPAPERS=(
-  dayfox 01-coffee.jpg
+  dayfox latch-2.png
   miasma 0-nature-of-fear.png
-  latch latch-2.png
+  latch latch-1.jpg
 )
 
 _theme_wallpaper() {
   local theme="$1"
   local wallpaper="${THEME_WALLPAPERS[$theme]}"
+  local wallpaper_path="$HOME/Wallpapers/$wallpaper"
+
+  if [[ -z "$wallpaper" ]]; then
+    echo "wallpaper: no wallpaper mapped for theme '$theme'" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$wallpaper_path" ]]; then
+    echo "wallpaper: '$wallpaper_path' not found" >&2
+    return 1
+  fi
 
   if [[ "$OSTYPE" == darwin* ]]; then
-    if [[ -n "$wallpaper" ]]; then
-      swift - << EOF
+    swift - << EOF
 import AppKit
-let url = URL(fileURLWithPath: "$HOME/Wallpapers/$wallpaper")
+let url = URL(fileURLWithPath: "$wallpaper_path")
 for screen in NSScreen.screens {
     try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
 }
 EOF
-      echo "wallpaper: $wallpaper"
+    echo "wallpaper: $wallpaper"
+  elif [[ "$OSTYPE" == linux* ]]; then
+    local qdbus_output=""
+
+    if ! command -v qdbus6 >/dev/null 2>&1; then
+      echo "wallpaper: qdbus6 not found" >&2
+      return 1
     fi
+
+    if ! qdbus_output="$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+const ds = desktops();
+for (const desktop of ds) {
+  desktop.wallpaperPlugin = 'org.kde.image';
+  desktop.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+  desktop.writeConfig('Image', 'file://$wallpaper_path');
+}
+" 2>&1)"; then
+      echo "$qdbus_output" >&2
+      return 1
+    fi
+
+    echo "wallpaper: $wallpaper"
   fi
 }
 
