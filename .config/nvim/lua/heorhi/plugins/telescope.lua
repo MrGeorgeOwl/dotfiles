@@ -7,6 +7,7 @@ return {
                 file_ignore_patterns = {
                     '%.venv/',
                     '%.git/',
+                    '%.idea/',
                 },
             },
         })
@@ -29,6 +30,8 @@ return {
                         '!**/.venv/**',
                         '--glob',
                         '!**/.git/**',
+                        '--glob',
+                        '!**/.idea/**',
                     }
                 end,
             })
