@@ -12,4 +12,7 @@ alias kcn="k config set-context --current --namespace"
 alias kgp="k get pods"
 alias kgn="k get namespaces"
 alias kgd="k get deployments"
-
+alias tls="tmux ls"
+alias tat="tmux attach -t"
+alias tns="tmux new-session -s"
+alias tnsd="tmux new-session -d -s"
