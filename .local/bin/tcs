@@ -1,0 +1,159 @@
+#!/usr/bin/env zsh
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: tcs [-d|--detach] [project-dir] [session-name]
+
+Tmux for Coding Sessions (tcs)
+
+Create the standard coding tmux session:
+  - nvim: editor pane plus shell pane
+  - agent: starts claude
+  - terminal: plain shell
+
+Arguments:
+  project-dir    Directory to open. Defaults to the current git root, then $PWD.
+  session-name   tmux session name. Defaults to the project directory name.
+
+Examples:
+  tcs
+  tcs my-session
+  tcs ../my-worktree
+  tcs -d ../my-worktree my-session
+EOF
+}
+
+die() {
+  echo "tcs: $*" >&2
+  exit 1
+}
+
+git_root_or_pwd() {
+  local root
+
+  if root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s\n' "$root"
+  else
+    pwd
+  fi
+}
+
+resolve_dir() {
+  local dir="$1"
+
+  if [[ ! -d "$dir" ]]; then
+    die "directory '$dir' not found"
+  fi
+
+  cd "$dir" && pwd
+}
+
+default_session_name() {
+  local dir="$1"
+  local name="${dir:t}"
+
+  name="${name//[^A-Za-z0-9_.-]/-}"
+
+  if [[ -z "$name" ]]; then
+    die "could not derive a session name from '$dir'"
+  fi
+
+  printf '%s\n' "$name"
+}
+
+attach_or_switch() {
+  local session="$1"
+
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$session"
+  else
+    tmux attach -t "$session"
+  fi
+}
+
+detach=0
+args=()
+
+while (( $# > 0 )); do
+  case "$1" in
+    -d|--detach)
+      detach=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      args+=("$@")
+      break
+      ;;
+    -*)
+      die "unknown option '$1'"
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if (( ${#args[@]} > 2 )); then
+  usage >&2
+  exit 1
+fi
+
+source_dir="$(git_root_or_pwd)"
+
+case "${#args[@]}" in
+  0)
+    dir="$(resolve_dir "$source_dir")"
+    session="$(default_session_name "$dir")"
+    ;;
+  1)
+    if [[ -d "${args[1]}" ]]; then
+      dir="$(resolve_dir "${args[1]}")"
+      session="$(default_session_name "$dir")"
+    else
+      dir="$(resolve_dir "$source_dir")"
+      session="${args[1]}"
+    fi
+    ;;
+  2)
+    dir="$(resolve_dir "${args[1]}")"
+    session="${args[2]}"
+    ;;
+esac
+
+[[ -n "$session" ]] || die "session name cannot be empty"
+[[ "$session" != *:* ]] || die "session name cannot contain ':'"
+
+if tmux has-session -t "$session" 2>/dev/null; then
+  if (( detach )); then
+    echo "tmux session '$session' already exists"
+    exit 0
+  fi
+  attach_or_switch "$session"
+  exit 0
+fi
+
+tmux new-session -d -s "$session" -c "$dir" -n "nvim"
+tmux set-window-option -t "${session}:nvim" remain-on-exit on
+tmux split-window -h -t "${session}:nvim" -c "$dir" -p 40
+tmux send-keys -t "${session}:nvim.1" "nv ." C-m
+
+tmux new-window -t "$session" -c "$dir" -n "agent"
+tmux set-window-option -t "${session}:agent" remain-on-exit on
+tmux send-keys -t "${session}:agent.1" "claude" C-m
+
+tmux new-window -t "$session" -c "$dir" -n "terminal"
+tmux set-window-option -t "${session}:terminal" remain-on-exit on
+
+tmux select-window -t "$session:nvim"
+
+if (( ! detach )); then
+  attach_or_switch "$session"
+fi
