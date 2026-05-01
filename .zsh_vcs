@@ -1,0 +1,24 @@
+# Prompt: user + path on the left, Git state on the right.
+autoload -Uz vcs_info
+setopt PROMPT_SUBST
+
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' check-for-changes true
+zstyle ':vcs_info:git:*' stagedstr ' +'
+zstyle ':vcs_info:git:*' unstagedstr ' *'
+zstyle ':vcs_info:git:*' formats '%b%c%u%m'
+zstyle ':vcs_info:git:*' actionformats '%b|%a%c%u%m'
+zstyle ':vcs_info:git+set-message:*' hooks git-untracked
+
++vi-git-untracked() {
+  if git status --porcelain --untracked-files=normal 2>/dev/null | command grep -q '^??'; then
+    hook_com[misc]+=' ?'
+  fi
+}
+
+precmd() {
+  vcs_info
+}
+
+PROMPT='%n %~ %# '
+RPROMPT='${vcs_info_msg_0_}'

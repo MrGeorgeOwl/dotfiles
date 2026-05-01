@@ -42,8 +42,9 @@ autoload -Uz compinit
 compinit
 # End of lines added by compinstall
 
-eval "$(starship init zsh)"
 eval "$(zoxide init zsh)"
+
+if [ -f ~/.zsh_vcs ]; then . ~/.zsh_vcs; fi
 
 # Alias definitions.
 # You may want to put all your additions into a separate file like
