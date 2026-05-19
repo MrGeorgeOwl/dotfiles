@@ -20,5 +20,5 @@ precmd() {
   vcs_info
 }
 
-PROMPT='%n %~ %# '
+PROMPT='%n %1~ %# '
 RPROMPT='${vcs_info_msg_0_}'
