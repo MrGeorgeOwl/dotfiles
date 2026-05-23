@@ -1,4 +1,4 @@
-# Prompt: user + path on the left, Git state on the right.
+# Prompt: user + path + Git state on the first line, input on the second.
 autoload -Uz vcs_info
 setopt PROMPT_SUBST
 
@@ -20,5 +20,25 @@ precmd() {
   vcs_info
 }
 
-PROMPT='%n %1~ %# '
-RPROMPT='${vcs_info_msg_0_}'
+prompt_symbol='❯'
+
+zle-keymap-select() {
+  case $KEYMAP in
+    vicmd) prompt_symbol='❮' ;;
+    *) prompt_symbol='❯' ;;
+  esac
+
+  zle reset-prompt
+}
+
+zle-line-init() {
+  prompt_symbol='❯'
+  zle reset-prompt
+}
+
+zle -N zle-keymap-select
+zle -N zle-line-init
+
+PROMPT='%n %1~ ${vcs_info_msg_0_}
+${prompt_symbol} '
+RPROMPT=''
