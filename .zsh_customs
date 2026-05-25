@@ -21,12 +21,16 @@ _theme_wallpaper() {
   fi
 
   if [[ "$OSTYPE" == darwin* ]]; then
-    swift - << EOF
-import AppKit
-let url = URL(fileURLWithPath: "$wallpaper_path")
-for screen in NSScreen.screens {
-    try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
-}
+    osascript - "$wallpaper_path" <<'EOF'
+on run argv
+  set wallpaperPath to item 1 of argv
+
+  tell application "System Events"
+    repeat with desktopItem in desktops
+      set picture of desktopItem to wallpaperPath
+    end repeat
+  end tell
+end run
 EOF
     echo "wallpaper: $wallpaper"
   elif [[ "$OSTYPE" == linux* ]]; then
