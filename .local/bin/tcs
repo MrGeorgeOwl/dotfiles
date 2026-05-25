@@ -11,6 +11,7 @@ Tmux for Coding Sessions (tcs)
 Create the standard coding tmux session:
   - nvim: editor pane plus shell pane
   - agent: starts claude
+  - codex: starts codex
   - terminal: plain shell
 
 Arguments:
@@ -73,6 +74,28 @@ attach_or_switch() {
   fi
 }
 
+has_window() {
+  local session="$1"
+  local window="$2"
+
+  tmux list-windows -t "$session" -F '#W' | grep -Fxq "$window"
+}
+
+ensure_command_window() {
+  local session="$1"
+  local dir="$2"
+  local window="$3"
+  local command="$4"
+
+  if has_window "$session" "$window"; then
+    return 0
+  fi
+
+  tmux new-window -t "$session" -c "$dir" -n "$window"
+  tmux set-window-option -t "${session}:${window}" remain-on-exit on
+  tmux send-keys -t "${session}:${window}.1" "$command" C-m
+}
+
 detach=0
 args=()
 
@@ -132,6 +155,9 @@ esac
 [[ "$session" != *:* ]] || die "session name cannot contain ':'"
 
 if tmux has-session -t "$session" 2>/dev/null; then
+  ensure_command_window "$session" "$dir" "agent" "claude"
+  ensure_command_window "$session" "$dir" "codex" "codex"
+
   if (( detach )); then
     echo "tmux session '$session' already exists"
     exit 0
@@ -145,9 +171,8 @@ tmux set-window-option -t "${session}:nvim" remain-on-exit on
 tmux split-window -h -t "${session}:nvim" -c "$dir" -p 40
 tmux send-keys -t "${session}:nvim.1" "nv ." C-m
 
-tmux new-window -t "$session" -c "$dir" -n "agent"
-tmux set-window-option -t "${session}:agent" remain-on-exit on
-tmux send-keys -t "${session}:agent.1" "claude" C-m
+ensure_command_window "$session" "$dir" "agent" "claude"
+ensure_command_window "$session" "$dir" "codex" "codex"
 
 tmux new-window -t "$session" -c "$dir" -n "terminal"
 tmux set-window-option -t "${session}:terminal" remain-on-exit on
