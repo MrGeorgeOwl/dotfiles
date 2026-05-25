@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create GitHub PR"
+  short_description: "Draft, approve, push, and create GitHub pull requests."
+  default_prompt: "Create a GitHub PR for the current branch."

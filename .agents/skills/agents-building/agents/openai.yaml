@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agents Building"
+  short_description: "Design and review reliable agentic systems"
+  default_prompt: "Use $agents-building to design or review this agent implementation."

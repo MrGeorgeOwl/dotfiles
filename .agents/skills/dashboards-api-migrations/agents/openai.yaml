@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dashboards API Migrations"
+  short_description: "Create StarRocks Alembic migrations for dashboards-api."
+  default_prompt: "Create or update a dashboards-api Alembic migration following project conventions."

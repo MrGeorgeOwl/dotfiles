@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Changes"
+  short_description: "Review uncommitted changes"
+  default_prompt: "Use $review-changes to review my uncommitted changes before I commit."

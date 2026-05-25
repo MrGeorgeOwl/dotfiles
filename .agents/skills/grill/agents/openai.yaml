@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grill"
+  short_description: "Adversarial branch code review"
+  default_prompt: "Use $grill to review this branch before I merge it."
