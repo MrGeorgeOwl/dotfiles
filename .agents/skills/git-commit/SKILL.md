@@ -29,4 +29,13 @@ Keep `<commit msg>` a short summary of what was done, under 120 characters inclu
 4. Write the commit message in the required format.
 5. Run the commit command with the chosen message.
 
+Use a complete quoted `-m` argument when committing:
+
+```bash
+git commit -m "<feat|fix|refact>: <commit msg>"
+```
+
+Ensure the opening and closing double quote characters are both present in the
+actual shell command.
+
 Do not use other conventional-commit types such as `docs`, `chore`, `test`, `style`, or `perf`.
