@@ -1,0 +1,130 @@
+#!/usr/bin/env zsh
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: agent-sync [--dry-run]
+
+Synchronize agent setup from this dotfiles repository:
+  - .agents/skills -> ~/.codex/skills and ~/.claude/skills
+  - .agents/prompts -> ~/.codex/prompts and ~/.claude/prompts, if prompt files exist
+  - .agents/codex -> ~/.codex
+  - .agents/claude/commands -> ~/.claude/commands
+  - .agents/claude/roles -> ~/.claude/agents
+  - .agents/claude/CLAUDE.md and settings.json -> ~/.claude
+
+The sync copies files into place and overwrites matching files. It does not
+delete destination-only files.
+EOF
+}
+
+die() {
+  echo "agent-sync: $*" >&2
+  exit 1
+}
+
+log() {
+  echo "agent-sync: $*"
+}
+
+repo_root() {
+  local script_path="${${(%):-%x}:A}"
+  local script_dir="${script_path:h}"
+  cd "$script_dir/.." && pwd
+}
+
+has_real_files() {
+  local dir="$1"
+  local file
+
+  [[ -d "$dir" ]] || return 1
+
+  for file in "$dir"/**/*(.N); do
+    [[ "${file:t}" == "README.md" ]] && continue
+    return 0
+  done
+
+  return 1
+}
+
+copy_path() {
+  local src="$1"
+  local dest="$2"
+
+  [[ -e "$src" ]] || return 0
+
+  if (( dry_run )); then
+    log "would copy $src -> $dest"
+    return 0
+  fi
+
+  mkdir -p "${dest:h}"
+  cp -R "$src" "$dest"
+}
+
+copy_dir_contents() {
+  local src="$1"
+  local dest="$2"
+  local item
+
+  [[ -d "$src" ]] || return 0
+
+  if (( dry_run )); then
+    log "would sync $src/ -> $dest/"
+    return 0
+  fi
+
+  mkdir -p "$dest"
+
+  for item in "$src"/*(N) "$src"/.[!.]*(N); do
+    cp -R "$item" "$dest"/
+  done
+}
+
+dry_run=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option '$1'"
+      ;;
+  esac
+done
+
+root="$(repo_root)"
+agents_dir="$root/.agents"
+
+[[ -d "$agents_dir" ]] || die "missing $agents_dir"
+
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+
+log "source: $agents_dir"
+log "codex:  $codex_home"
+log "claude: $claude_home"
+
+copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
+copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
+
+if has_real_files "$agents_dir/prompts"; then
+  copy_dir_contents "$agents_dir/prompts" "$codex_home/prompts"
+  copy_dir_contents "$agents_dir/prompts" "$claude_home/prompts"
+fi
+
+copy_dir_contents "$agents_dir/codex" "$codex_home"
+
+copy_dir_contents "$agents_dir/claude/commands" "$claude_home/commands"
+copy_dir_contents "$agents_dir/claude/roles" "$claude_home/agents"
+copy_path "$agents_dir/claude/CLAUDE.md" "$claude_home/CLAUDE.md"
+copy_path "$agents_dir/claude/settings.json" "$claude_home/settings.json"
+
+log "done"

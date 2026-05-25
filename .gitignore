@@ -1,9 +1,5 @@
 lazy-lock.json
 *.tar
 *.gz
-.codex/*
-!.codex/AGENTS.md
-!.codex/config.toml
-!.codex/rules/
-!.codex/rules/default.rules
+.codex
 !.claude/settings.local.json
