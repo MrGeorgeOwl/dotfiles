@@ -97,10 +97,26 @@ _theme_nvim() {
   local theme="$1"
   local nvim_plugins="$HOME/.config/nvim/lua/heorhi/plugins"
   local nvim_themes="$HOME/.config/nvim/lua/heorhi/themes"
+  local nvim_reload="$HOME/.config/nvim/lua/heorhi/theme_reload.lua"
+  local server keys sent
 
   if [[ -f "$nvim_themes/$theme.lua" ]]; then
     cp "$nvim_themes/$theme.lua" "$nvim_plugins/colorscheme.lua"
-    echo "neovim: $theme (restart nvim to apply)"
+
+    keys="<C-\\><C-N><Cmd>luafile $nvim_reload<CR>"
+
+    sent=0
+
+    for server in "$TMPDIR"/nvim."$USER"/*/nvim.*(N); do
+      (nvim --server "$server" --remote-send "$keys" >/dev/null 2>&1) &!
+      (( sent++ ))
+    done
+
+    if (( sent > 0 )); then
+      echo "neovim: $theme (reloading $sent running sessions)"
+    else
+      echo "neovim: $theme"
+    fi
   else
     echo "neovim: '$theme' not found, skipping"
   fi
