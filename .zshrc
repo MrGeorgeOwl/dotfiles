@@ -45,6 +45,7 @@ compinit
 eval "$(zoxide init zsh)"
 
 if [ -f ~/.zsh_vcs ]; then . ~/.zsh_vcs; fi
+if [ -f ~/.zsh_exports ]; then . ~/.zsh_exports; fi
 
 # Alias definitions.
 # You may want to put all your additions into a separate file like
