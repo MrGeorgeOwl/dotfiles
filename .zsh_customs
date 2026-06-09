@@ -34,21 +34,23 @@ end run
 EOF
     echo "wallpaper: $wallpaper"
   elif [[ "$OSTYPE" == linux* ]]; then
-    local qdbus_output=""
+    local plasma_script qdbus_output
 
-    if ! command -v qdbus6 >/dev/null 2>&1; then
-      echo "wallpaper: qdbus6 not found" >&2
-      return 1
-    fi
-
-    if ! qdbus_output="$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+    plasma_script="
 const ds = desktops();
 for (const desktop of ds) {
   desktop.wallpaperPlugin = 'org.kde.image';
   desktop.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
   desktop.writeConfig('Image', 'file://$wallpaper_path');
 }
-" 2>&1)"; then
+"
+
+    if ! command -v qdbus6 >/dev/null 2>&1; then
+      echo "wallpaper: qdbus6 not found" >&2
+      return 1
+    fi
+
+    if ! qdbus_output="$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$plasma_script" 2>&1)"; then
       echo "$qdbus_output" >&2
       return 1
     fi
@@ -92,7 +94,9 @@ _theme_ghostty() {
   fi
 
   cp "$ghostty_themes/$theme" "$ghostty_themes/current"
+
   _reload_ghostty
+
   echo "ghostty: $theme"
 }
 
@@ -125,10 +129,10 @@ _theme_nvim() {
 
     for server in "$TMPDIR"/nvim."$USER"/*/nvim.*(N); do
       (nvim --server "$server" --remote-send "$keys" >/dev/null 2>&1) &!
-      (( sent++ ))
+      ((sent++))
     done
 
-    if (( sent > 0 )); then
+    if ((sent > 0)); then
       echo "neovim: $theme (reloading $sent running sessions)"
     else
       echo "neovim: $theme"
