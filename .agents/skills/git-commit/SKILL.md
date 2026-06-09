@@ -39,3 +39,6 @@ Ensure the opening and closing double quote characters are both present in the
 actual shell command.
 
 Do not use other conventional-commit types such as `docs`, `chore`, `test`, `style`, or `perf`.
+
+Do not include PR, issue, or bot slash commands such as `/assign` or `/label`;
+they do not work in commit messages or PR descriptions.
