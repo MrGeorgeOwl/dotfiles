@@ -1,4 +1,0 @@
-interface:
-  display_name: "Acquire Query Builder Investigation"
-  short_description: "Trace Acquire metrics and query builders."
-  default_prompt: "Use this skill when investigating acquire-mcp-server metrics, query builders, joins, filters, SQL generation, or metric source behavior across campaign, ad group, keyword, and related surfaces."

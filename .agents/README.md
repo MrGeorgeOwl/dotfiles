@@ -5,7 +5,7 @@ Central storage for reusable agent assets.
 ## Layout
 
 - `skills/` contains agent-agnostic skills gathered from Codex and Claude.
-- `codex/` contains Codex-specific defaults and permission rules.
+- `codex/` contains Codex-specific defaults.
 - `claude/` contains Claude-specific defaults.
 - `claude/commands/` contains Claude slash-command prompts.
 - `claude/roles/` contains Claude role/subagent prompts.
@@ -25,9 +25,5 @@ Use `.agents/agent-sync --dry-run` to preview destinations.
 
 ## Imported Sources
 
-- Codex: `~/.codex/skills`, `~/.codex/rules/default.rules`, `~/.codex/config.toml`, `~/.codex/AGENTS.md`
+- Codex: `~/.codex/skills`, `~/.codex/config.toml`, `~/.codex/AGENTS.md`
 - Claude: `~/.claude/skills`, `~/.claude/commands`, `~/.claude/agents`, `~/.claude/CLAUDE.md`, `~/.claude/settings.json`
-
-When the same skill existed in both Codex and Claude, the file with the newest
-mtime won. The only duplicated skill with different content was `grill`, where
-the Claude copy was newer.
