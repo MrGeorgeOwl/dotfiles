@@ -57,10 +57,34 @@ for (const desktop of ds) {
   fi
 }
 
+_reload_ghostty() {
+  local ghostty_service="app-com.mitchellh.ghostty.service"
+  local reload_script='
+tell application "System Events"
+  if exists application process "Ghostty" then
+    tell application process "Ghostty"
+      set frontmost to true
+      keystroke "," using {command down, shift down}
+    end tell
+  end if
+end tell
+'
+  local reload_output=""
+
+  if [[ "$OSTYPE" == darwin* ]]; then
+    if ! reload_output="$(osascript -e "$reload_script" 2>&1)"; then
+      echo "ghostty: reload shortcut failed: $reload_output" >&2
+    fi
+  elif command -v systemctl >/dev/null 2>&1 && systemctl --user --quiet is-active "$ghostty_service"; then
+    systemctl reload --user "$ghostty_service"
+  else
+    pkill -USR2 -x ghostty >/dev/null 2>&1 || true
+  fi
+}
+
 _theme_ghostty() {
   local theme="$1"
   local ghostty_themes="$HOME/.config/ghostty/themes"
-  local ghostty_service="app-com.mitchellh.ghostty.service"
 
   if [[ ! -f "$ghostty_themes/$theme" ]]; then
     echo "ghostty: '$theme' not found, skipping"
@@ -68,15 +92,7 @@ _theme_ghostty() {
   fi
 
   cp "$ghostty_themes/$theme" "$ghostty_themes/current"
-
-  if pgrep -x ghostty >/dev/null 2>&1; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl --user --quiet is-active "$ghostty_service"; then
-      systemctl reload --user "$ghostty_service"
-    else
-      pkill -USR2 -x ghostty
-    fi
-  fi
-
+  _reload_ghostty
   echo "ghostty: $theme"
 }
 
