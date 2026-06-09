@@ -6,13 +6,23 @@ return {
         end
 
         local function open_to_right()
-            local cfile = vim.fn["fugitive#Cfile"]()
+            local status_buf = vim.api.nvim_get_current_buf()
+            local cfile = vim.fn["fugitive#PorcelainCfile"]()
 
             if cfile == "" then
                 return
             end
 
+            local target_win = vim.b.fugitive_right_win
+
+            if target_win ~= nil and vim.api.nvim_win_is_valid(target_win) then
+                vim.api.nvim_set_current_win(target_win)
+                vim.cmd("edit " .. cfile)
+                return
+            end
+
             vim.cmd("rightbelow Gvsplit " .. cfile)
+            vim.api.nvim_buf_set_var(status_buf, "fugitive_right_win", vim.api.nvim_get_current_win())
         end
 
         local function edit_keymaps()
