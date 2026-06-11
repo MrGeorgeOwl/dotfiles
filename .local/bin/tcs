@@ -9,13 +9,12 @@ Usage: tcs [-d|--detach] [project-dir] [session-name]
 Tmux for Coding Sessions (tcs)
 
 Create the standard coding tmux session:
-  - nvim: editor pane plus shell pane
-  - agent: starts claude
-  - codex: starts codex
+  - nvim: opens the current folder in Neovim
+  - claude: starts claude
   - terminal: plain shell
 
 Arguments:
-  project-dir    Directory to open. Defaults to the current git root, then $PWD.
+  project-dir    Directory to open. Defaults to $PWD.
   session-name   tmux session name. Defaults to the project directory name.
 
 Examples:
@@ -29,16 +28,6 @@ EOF
 die() {
   echo "tcs: $*" >&2
   exit 1
-}
-
-git_root_or_pwd() {
-  local root
-
-  if root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    printf '%s\n' "$root"
-  else
-    pwd
-  fi
 }
 
 resolve_dir() {
@@ -129,7 +118,7 @@ if (( ${#args[@]} > 2 )); then
   exit 1
 fi
 
-source_dir="$(git_root_or_pwd)"
+source_dir="$(pwd)"
 
 case "${#args[@]}" in
   0)
@@ -155,8 +144,7 @@ esac
 [[ "$session" != *:* ]] || die "session name cannot contain ':'"
 
 if tmux has-session -t "$session" 2>/dev/null; then
-  ensure_command_window "$session" "$dir" "agent" "claude"
-  ensure_command_window "$session" "$dir" "codex" "codex"
+  ensure_command_window "$session" "$dir" "claude" "claude"
 
   if (( detach )); then
     echo "tmux session '$session' already exists"
@@ -168,11 +156,9 @@ fi
 
 tmux new-session -d -s "$session" -c "$dir" -n "nvim"
 tmux set-window-option -t "${session}:nvim" remain-on-exit on
-tmux split-window -h -t "${session}:nvim" -c "$dir" -p 40
-tmux send-keys -t "${session}:nvim.1" "nv ." C-m
+tmux send-keys -t "${session}:nvim.1" "nvim ." C-m
 
-ensure_command_window "$session" "$dir" "agent" "claude"
-ensure_command_window "$session" "$dir" "codex" "codex"
+ensure_command_window "$session" "$dir" "claude" "claude"
 
 tmux new-window -t "$session" -c "$dir" -n "terminal"
 tmux set-window-option -t "${session}:terminal" remain-on-exit on
