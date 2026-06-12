@@ -3,6 +3,7 @@ THEME_WALLPAPERS=(
   dayfox latch-2.png
   miasma 0-nature-of-fear.png
   latch latch-1.jpg
+  solarized-light vagabond.png
 )
 
 _theme_wallpaper() {
