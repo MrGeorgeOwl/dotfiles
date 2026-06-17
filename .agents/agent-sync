@@ -7,7 +7,7 @@ usage() {
 Usage: agent-sync [--dry-run]
 
 Synchronize agent setup from this dotfiles repository:
-  - .agents/skills -> ~/.codex/skills and ~/.claude/skills
+  - .agents/skills -> ~/.agents/skills and ~/.claude/skills
   - .agents/prompts -> ~/.codex/prompts and ~/.claude/prompts, if prompt files exist
   - .agents/codex -> ~/.codex
   - .agents/claude/commands -> ~/.claude/commands
@@ -106,13 +106,15 @@ agents_dir="$root/.agents"
 [[ -d "$agents_dir" ]] || die "missing $agents_dir"
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
+agents_home="${AGENTS_HOME:-$HOME/.agents}"
 claude_home="${CLAUDE_HOME:-$HOME/.claude}"
 
 log "source: $agents_dir"
 log "codex:  $codex_home"
+log "agents: $agents_home"
 log "claude: $claude_home"
 
-copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
+copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
 copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
 
 if has_real_files "$agents_dir/prompts"; then

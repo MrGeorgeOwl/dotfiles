@@ -18,12 +18,13 @@ For example, `.claude/settings.local.json` remains local to this repo.
 ## Sync
 
 Run `.agents/agent-sync` after changing shared agent assets.
-It copies shared skills and prompts into both Codex and Claude configs, then
-copies Codex-only and Claude-only assets into their matching config folders.
+It copies shared skills into the home-level agent store and Claude config,
+copies shared prompts into both Codex and Claude configs, then copies Codex-only
+and Claude-only assets into their matching config folders.
 
 Use `.agents/agent-sync --dry-run` to preview destinations.
 
 ## Imported Sources
 
-- Codex: `~/.codex/skills`, `~/.codex/config.toml`, `~/.codex/AGENTS.md`
+- Codex: `~/.agents/skills`, `~/.codex/config.toml`, `~/.codex/AGENTS.md`
 - Claude: `~/.claude/skills`, `~/.claude/commands`, `~/.claude/agents`, `~/.claude/CLAUDE.md`, `~/.claude/settings.json`
