@@ -6,3 +6,7 @@ function insertFullPath()
 	vim.fn.setreg("+", filepath) -- write to clipboard
 end
 vim.keymap.set("n", "<leader>pc", insertFullPath, { noremap = true, silent = true })
+
+vim.keymap.set("n", "<leader>pr", function()
+	vim.cmd("vertical Diff review ++layout=split")
+end, { noremap = true, silent = true })

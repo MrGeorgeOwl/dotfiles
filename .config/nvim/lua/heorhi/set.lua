@@ -13,6 +13,7 @@ vim.opt.hlsearch = false
 vim.opt.incsearch = true
 
 vim.opt.scrolloff = 15
+vim.opt.splitright = true
 
 vim.opt.updatetime = 50
 
