@@ -10,7 +10,7 @@ Tmux for Coding Sessions (tcs)
 
 Create the standard coding tmux session:
   - nvim: opens the current folder in Neovim
-  - pi-agent: starts pi-agent
+  - pi: starts pi
   - terminal: plain shell
 
 Arguments:
@@ -144,7 +144,7 @@ esac
 [[ "$session" != *:* ]] || die "session name cannot contain ':'"
 
 if tmux has-session -t "$session" 2>/dev/null; then
-  ensure_command_window "$session" "$dir" "pi-agent" "pi-agent"
+  ensure_command_window "$session" "$dir" "pi" "pi"
 
   if (( detach )); then
     echo "tmux session '$session' already exists"
@@ -158,7 +158,7 @@ tmux new-session -d -s "$session" -c "$dir" -n "nvim"
 tmux set-window-option -t "${session}:nvim" remain-on-exit on
 tmux send-keys -t "${session}:nvim.1" "nvim ." C-m
 
-ensure_command_window "$session" "$dir" "pi-agent" "pi-agent"
+ensure_command_window "$session" "$dir" "pi" "pi"
 
 tmux new-window -t "$session" -c "$dir" -n "terminal"
 tmux set-window-option -t "${session}:terminal" remain-on-exit on
