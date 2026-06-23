@@ -9,4 +9,20 @@ return {
 			},
 		}
 	end,
+	keys = {
+		{
+			"<leader>pr",
+			function()
+				vim.cmd("vertical Diff review ++layout=split")
+			end,
+			desc = "Diff review",
+		},
+		{
+			"<leader>prf",
+			function()
+				vim.cmd("vertical Diff")
+			end,
+			desc = "Diff current file",
+		},
+	},
 }
