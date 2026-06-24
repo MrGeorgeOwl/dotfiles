@@ -49,6 +49,13 @@ return {
 			desc = "Diff review",
 		},
 		{
+			"<leader>prh",
+			function()
+				vim.cmd("Diff review ++layout=split HEAD")
+			end,
+			desc = "Review uncommitted changes vs HEAD",
+		},
+		{
 			"<leader>prf",
 			function()
 				vim.cmd("vertical Diff")
