@@ -61,7 +61,22 @@ local function open_history()
 		return
 	end
 
-	local width = math.min(math.max(40, math.floor(vim.o.columns * 0.7)), vim.o.columns - 4)
+	-- Pad each entry on the left so the text is not glued to the border.
+	local h_pad = 2
+	local padded = {}
+	for i, commit in ipairs(commits) do
+		padded[i] = string.rep(" ", h_pad) .. commit
+	end
+
+	local title = " Git commits "
+	local content_width = vim.fn.strdisplaywidth(title)
+	for _, line in ipairs(padded) do
+		content_width = math.max(content_width, vim.fn.strdisplaywidth(line))
+	end
+
+	-- Fit the window to its contents plus a matching right pad, while keeping a
+	-- margin on both screen edges so the popup is not glued to the sides.
+	local width = math.max(40, math.min(content_width + h_pad, vim.o.columns - 8))
 	local height = math.min(#commits, math.max(1, math.floor(vim.o.lines * 0.6)))
 	local row = math.max(0, math.floor((vim.o.lines - height) / 2 - 1))
 	local col = math.max(0, math.floor((vim.o.columns - width) / 2))
@@ -81,14 +96,14 @@ local function open_history()
 		notify("Could not name commit-history buffer", vim.log.levels.DEBUG)
 	end
 
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, commits)
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, padded)
 	vim.bo[buf].modifiable = false
 
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
 		style = "minimal",
 		border = "rounded",
-		title = " Git commits ",
+		title = title,
 		title_pos = "center",
 		row = row,
 		col = col,
@@ -102,7 +117,7 @@ local function open_history()
 	end
 
 	local function select_commit()
-		local hash = vim.api.nvim_get_current_line():match("^(%S+)")
+		local hash = vim.api.nvim_get_current_line():match("^%s*(%S+)")
 		if not hash then
 			notify("Could not read commit hash from selection")
 			return
