@@ -58,7 +58,24 @@ return {
 		{
 			"<leader>prf",
 			function()
-				vim.cmd("vertical Diff")
+				local source_win = vim.api.nvim_get_current_win()
+
+				-- diffs.nvim opens a single-file diff in a split; adopt that buffer into
+				-- the current window so the diff replaces the file in place. <C-o> still
+				-- returns to the source, since nvim_win_set_buf records the jump.
+				if not pcall(vim.cmd, "Diff") then
+					return
+				end
+
+				local diff_win = vim.api.nvim_get_current_win()
+				if diff_win == source_win then
+					return -- nothing opened (e.g. no changes)
+				end
+
+				local diff_buf = vim.api.nvim_get_current_buf()
+				vim.api.nvim_set_current_win(source_win)
+				vim.api.nvim_win_set_buf(source_win, diff_buf)
+				vim.api.nvim_win_close(diff_win, true)
 			end,
 			desc = "Diff current file",
 		},
