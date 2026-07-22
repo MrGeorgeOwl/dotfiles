@@ -1,22 +1,25 @@
 vim.g.mapleader = " "
 
-local function project_structure_root()
+local function project_structure_directory()
 	local buffer_name = vim.api.nvim_buf_get_name(0)
-	local start = vim.fn.getcwd()
 
 	if buffer_name ~= "" and not buffer_name:match("^%w+://") then
 		if vim.fn.isdirectory(buffer_name) == 1 then
-			start = buffer_name
-		elseif vim.fn.filereadable(buffer_name) == 1 then
-			start = vim.fs.dirname(buffer_name)
+			return buffer_name
+		end
+
+		local directory = vim.fs.dirname(buffer_name)
+		if directory and vim.fn.isdirectory(directory) == 1 then
+			return directory
 		end
 	end
 
-	return vim.fs.root(start, { ".git" }) or start
+	local cwd = vim.fn.getcwd()
+	return vim.fs.root(cwd, { ".git" }) or cwd
 end
 
 local function open_project_structure()
-	vim.cmd("Explore " .. vim.fn.fnameescape(project_structure_root()))
+	vim.cmd("Explore " .. vim.fn.fnameescape(project_structure_directory()))
 end
 
 vim.keymap.set("n", "<leader>pf", open_project_structure, { desc = "Open project structure" })
