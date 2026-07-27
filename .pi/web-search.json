@@ -1,0 +1,8 @@
+{
+  "searxngBaseUrl": "http://127.0.0.1:3030",
+  "provider": "searxng",
+  "workflow": "none",
+  "ssrf": {
+    "allowRanges": ["127.0.0.1/32"]
+  }
+}

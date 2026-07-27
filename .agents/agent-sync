@@ -13,6 +13,7 @@ Synchronize agent setup from this dotfiles repository:
   - .agents/claude/commands -> ~/.claude/commands
   - .agents/claude/roles -> ~/.claude/agents
   - .agents/claude/CLAUDE.md and settings.json -> ~/.claude
+  - .pi -> ~/.pi
 
 The sync copies files into place and overwrites matching files. It does not
 delete destination-only files.
@@ -108,11 +109,13 @@ agents_dir="$root/.agents"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 agents_home="${AGENTS_HOME:-$HOME/.agents}"
 claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+pi_home="${PI_HOME:-$HOME/.pi}"
 
 log "source: $agents_dir"
 log "codex:  $codex_home"
 log "agents: $agents_home"
 log "claude: $claude_home"
+log "pi:     $pi_home"
 
 copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
 copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
@@ -128,5 +131,7 @@ copy_dir_contents "$agents_dir/claude/commands" "$claude_home/commands"
 copy_dir_contents "$agents_dir/claude/roles" "$claude_home/agents"
 copy_path "$agents_dir/claude/CLAUDE.md" "$claude_home/CLAUDE.md"
 copy_path "$agents_dir/claude/settings.json" "$claude_home/settings.json"
+
+copy_dir_contents "$root/.pi" "$pi_home"
 
 log "done"

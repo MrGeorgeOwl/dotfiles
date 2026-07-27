@@ -10,6 +10,7 @@ Central storage for reusable agent assets.
 - `claude/commands/` contains Claude slash-command prompts.
 - `claude/roles/` contains Claude role/subagent prompts.
 - `prompts/` is reserved for shared prompts that are not tied to one agent's file format.
+- `../.pi/` contains Pi configuration synced to `~/.pi/` (for example, web-search provider settings).
 
 Repo-specific agent settings can still live in repository-level `.codex/` or
 `.claude/` folders when those files are meant to affect only this repository.
@@ -20,7 +21,8 @@ For example, `.claude/settings.local.json` remains local to this repo.
 Run `.agents/agent-sync` after changing shared agent assets.
 It copies shared skills into the home-level agent store and Claude config,
 copies shared prompts into both Codex and Claude configs, then copies Codex-only
-and Claude-only assets into their matching config folders.
+and Claude-only assets into their matching config folders. It also copies the
+repository `.pi/` directory into `~/.pi/` (or `$PI_HOME`).
 
 Use `.agents/agent-sync --dry-run` to preview destinations.
 
