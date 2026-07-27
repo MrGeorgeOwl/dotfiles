@@ -14,7 +14,7 @@ When this skill is invoked with a prompt:
 1. **Dispatch Codex and Claude agents** in READ-ONLY mode with the same prompt and highest available effort:
 
    ```bash
-   codex exec --full-auto -m gpt-5.5 --reasoning-effort high "READ-ONLY: Do not edit, write, or create any files. Only research and respond. <prompt>"
+   codex exec --full-auto -m gpt-5.6-terra "READ-ONLY: Do not edit, write, or create any files. Only research and respond. <prompt>"
    ```
 
    ```bash
