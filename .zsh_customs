@@ -143,6 +143,29 @@ _theme_nvim() {
   fi
 }
 
+_theme_herdr() {
+  local theme="$1"
+  local build_script="$HOME/.config/herdr/build_config.sh"
+  local reload_output
+
+  if [[ ! -f "$build_script" ]]; then
+    echo "herdr: '$build_script' not found, skipping"
+    return 0
+  fi
+
+  if ! bash "$build_script" "$theme"; then
+    return 1
+  fi
+
+  if ! command -v herdr >/dev/null 2>&1; then
+    echo "herdr: $theme (will apply on next start)"
+  elif reload_output="$(herdr server reload-config 2>&1)"; then
+    echo "herdr: $theme"
+  else
+    echo "herdr: $theme (will apply on next start; reload failed: $reload_output)" >&2
+  fi
+}
+
 theme-switch() {
   local theme="$1"
 
@@ -154,5 +177,6 @@ theme-switch() {
   _theme_ghostty "$theme"
   _theme_btop "$theme"
   _theme_nvim "$theme"
+  _theme_herdr "$theme"
   _theme_wallpaper "$theme"
 }
