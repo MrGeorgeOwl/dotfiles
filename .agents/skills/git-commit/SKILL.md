@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: Create git commits with the required message format. Use when the user asks Codex to commit changes, prepare a commit, choose a commit message, or review staged changes before committing.
+description: Use when user asks to commit changes in git.
 ---
 
 # Git Commit
@@ -10,35 +10,31 @@ description: Create git commits with the required message format. Use when the u
 Use exactly:
 
 ```text
-<feat|fix|refact>: <commit msg>
+<type>: <commit msg>
 ```
 
+## Types 
 Choose the type by the main purpose of the commit:
 
 - `feat`: new feature is added.
 - `fix`: bug is fixed.
-- `refact`: code structure or implementation quality is improved without changing intended behavior.
+- `refact`: behaviour is not changed but structure of the code is changed with improving code quality in mind.
+- `chore`: maintenance routine that doesn't change the project behaviour. 
 
 Keep `<commit msg>` a short summary of what was done, under 120 characters including the prefix.
 
 ## Workflow
 
 1. Inspect the working tree and staged changes before committing.
-2. If only part of the work should be committed, stage only the requested or relevant files.
-3. Pick exactly one type: `feat`, `fix`, or `refact`.
+2. If the user specifies the file names and scope of the work then commit, stage only the requested. Otherwise stage all files
+3. Depending on the work done in staged files pick one type for the commit message.
 4. Write the commit message in the required format.
 5. Run the commit command with the chosen message.
-
-Use a complete quoted `-m` argument when committing:
 
 ```bash
 git commit -m "<feat|fix|refact>: <commit msg>"
 ```
 
-Ensure the opening and closing double quote characters are both present in the
-actual shell command.
+Do not use other conventional-commit types.
 
-Do not use other conventional-commit types such as `docs`, `chore`, `test`, `style`, or `perf`.
-
-Do not include PR, issue, or bot slash commands such as `/assign` or `/label`;
-they do not work in commit messages or PR descriptions.
+Do not include bot slash commands `/assign` or `/label`.
