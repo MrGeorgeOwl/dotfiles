@@ -1,5 +1,6 @@
 return {
 	"tpope/vim-fugitive",
+	dependencies = { "tpope/vim-rhubarb" },
 	config = function()
 		local function get_git_status()
 			vim.cmd("Gedit :")
