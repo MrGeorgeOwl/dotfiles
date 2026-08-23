@@ -1,6 +1,9 @@
 return {
 	"tpope/vim-fugitive",
-	dependencies = { "tpope/vim-rhubarb" },
+	dependencies = {
+		"tpope/vim-rhubarb",
+		"tyru/open-browser.vim",
+	},
 	config = function()
 		local function get_git_status()
 			vim.cmd("Gedit :")
