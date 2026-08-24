@@ -42,6 +42,9 @@ autoload -Uz compinit
 compinit
 # End of lines added by compinstall
 
+# Show inline suggestions from command history while typing.
+source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+
 eval "$(zoxide init zsh)"
 
 if [ -f ~/.zsh_vcs ]; then . ~/.zsh_vcs; fi
