@@ -33,6 +33,9 @@ bindkey '^N' down-line-or-beginning-search
 bindkey '^R' history-incremental-search-backward
 # end history
 
+# bind autocomplete suggestions
+bindkey '^F' autosuggest-accept
+
 bindkey -v
 
 # The following lines were added by compinstall
