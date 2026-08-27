@@ -1,5 +1,10 @@
 onboarding = false
 
+# Herdr uses its own fixed theme and is intentionally independent from
+# theme-switch.
+[theme]
+name = "gruvbox"
+
 [terminal]
 new_cwd = "follow"
 
@@ -47,6 +52,7 @@ description = "resize pane right"
 
 [ui]
 mouse_capture = true
+agent_panel_sort = "spaces"
 
 [ui.toast]
 delivery = "herdr"
