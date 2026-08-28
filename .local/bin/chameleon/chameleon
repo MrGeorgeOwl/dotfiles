@@ -25,6 +25,7 @@ Apply a theme across configured components.
 Options:
   -c, --component NAME  Apply only NAME. May be specified more than once.
   -ff, --fail-fast      Stop at the first skipped or failed component.
+  -v, --verbose         Show module-level logs.
       --list            List available themes.
       --list-components List available components.
   -h, --help            Show this help.
@@ -114,12 +115,9 @@ run_module() {
 print_summary() {
   theme="$1"
 
+  is_verbose || return 0
   printf 'summary for theme "%s"\n' "$theme"
   printf '%s' "$SUMMARY_LINES"
-  printf 'applied=%s skipped=%s failed=%s\n' \
-    "$MODULE_SUCCESSES" \
-    "$MODULE_SKIPS" \
-    "$MODULE_FAILURES"
 }
 
 show_help() {
@@ -175,19 +173,15 @@ apply_theme() {
     && [ "$MODULE_SKIPS" -eq 0 ] \
     && [ "$MODULE_FAILURES" -eq 0 ]; then
     if atomic_write_line "$CHAMELEON_CONFIG_DIR/current" "$theme"; then
-      SUMMARY_LINES="${SUMMARY_LINES}current: updated
-"
+      log_info "current: updated to '$theme'"
     else
       printf 'chameleon: failed to update current theme\n' >&2
       MODULE_FAILURES=$((MODULE_FAILURES + 1))
-      SUMMARY_LINES="${SUMMARY_LINES}current: failed
-"
     fi
   elif [ "$COMPONENT_FILTERED" -eq 0 ]; then
-    SUMMARY_LINES="${SUMMARY_LINES}current: unchanged
-"
+    log_info "current: unchanged"
   else
-    SUMMARY_LINES="${SUMMARY_LINES}current: unchanged (component filter)\n"
+    log_info "current: unchanged (component filter)"
   fi
 
   print_summary "$theme"
@@ -203,6 +197,7 @@ apply() {
   SELECTED_MODULES=""
   COMPONENT_FILTERED=0
   FAIL_FAST=0
+  CHAMELEON_VERBOSE=0
   theme=""
 
   while [ "$#" -gt 0 ]; do
@@ -213,6 +208,10 @@ apply() {
         ;;
       -ff|--fail-fast)
         FAIL_FAST=1
+        shift
+        ;;
+      -v|--verbose)
+        CHAMELEON_VERBOSE=1
         shift
         ;;
       -c|--component)
@@ -268,6 +267,7 @@ apply() {
     return 2
   fi
 
+  export CHAMELEON_VERBOSE
   apply_theme "$theme"
 }
 

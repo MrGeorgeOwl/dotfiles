@@ -2,17 +2,28 @@
 
 CHAMELEON_SKIP=10
 CHAMELEON_CONFIG_DIR="$HOME/.config/chameleon"
+: "${CHAMELEON_VERBOSE:=0}"
+
+is_verbose() {
+  [ "$CHAMELEON_VERBOSE" = "1" ]
+}
 
 log_info() {
+  is_verbose || return 0
   printf '%s\n' "$1"
 }
 
 log_warn() {
+  is_verbose || return 0
+  printf '%s\n' "$1" >&2
+}
+
+log_error() {
   printf '%s\n' "$1" >&2
 }
 
 fail_module() {
-  log_warn "$1"
+  log_error "$1"
   return 1
 }
 
