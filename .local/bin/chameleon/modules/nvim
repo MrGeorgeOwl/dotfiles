@@ -1,0 +1,84 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+reload_running_nvim() {
+  nvim_command="$(command -v nvim 2>/dev/null || true)"
+  [ -n "$nvim_command" ] || return 0
+
+  runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  user_name="${USER:-$(id -un)}"
+  reload_file="${XDG_CONFIG_HOME:-$HOME/.config}/nvim/lua/heorhi/theme_reload.lua"
+  [ -f "$reload_file" ] || return 0
+
+  sent=0
+  for server in "$runtime_dir"/nvim."$user_name"/*/nvim.*; do
+    [ -S "$server" ] || continue
+    if "$nvim_command" --server "$server" --remote-send "<C-\\><C-N><Cmd>luafile $reload_file<CR>" >/dev/null 2>&1; then
+      sent=$((sent + 1))
+    else
+      log_warn "neovim: could not reload session at $server"
+    fi
+  done
+
+  if [ "$sent" -gt 0 ]; then
+    log_info "neovim: reloaded $sent running session(s)"
+  fi
+
+  return 0
+}
+
+apply_nvim() {
+  theme="$1"
+  profile="$(theme_value nvim "$theme")" || {
+    skip_module "neovim: no profile mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if [ -z "$profile" ]; then
+    skip_module "neovim: no profile mapped for theme '$theme'; skipped"
+    return $?
+  fi
+  if ! is_safe_name "$profile"; then
+    fail_module "neovim: invalid profile mapping for theme '$theme'"
+    return $?
+  fi
+
+  nvim_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/nvim/lua/heorhi"
+  profile_file="$nvim_config_dir/themes/$profile.lua"
+  colorscheme_file="$nvim_config_dir/plugins/colorscheme.lua"
+
+  if [ ! -f "$profile_file" ]; then
+    skip_module "neovim: profile '$profile' is not installed; skipped"
+    return $?
+  fi
+  if [ ! -d "${colorscheme_file%/*}" ]; then
+    fail_module "neovim: plugin directory not found: ${colorscheme_file%/*}"
+    return $?
+  fi
+
+  if ! atomic_copy "$profile_file" "$colorscheme_file"; then
+    fail_module "neovim: failed to update colorscheme"
+    return $?
+  fi
+
+  reload_running_nvim
+  log_info "neovim: applied '$profile'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: nvim apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_nvim "$2"
+}
+
+main "$@"

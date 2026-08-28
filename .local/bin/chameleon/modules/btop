@@ -1,0 +1,78 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+apply_btop() {
+  theme="$1"
+  profile="$(theme_value btop "$theme")" || {
+    skip_module "btop: no profile mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if [ -z "$profile" ]; then
+    skip_module "btop: no profile mapped for theme '$theme'; skipped"
+    return $?
+  fi
+  if ! is_safe_name "$profile"; then
+    fail_module "btop: invalid profile mapping for theme '$theme'"
+    return $?
+  fi
+
+  btop_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/btop"
+  btop_theme_file="$btop_config_dir/themes/$profile.theme"
+  btop_config_file="$btop_config_dir/btop.conf"
+
+  if [ ! -f "$btop_theme_file" ]; then
+    skip_module "btop: profile '$profile' is not installed; skipped"
+    return $?
+  fi
+  if [ ! -f "$btop_config_file" ]; then
+    fail_module "btop: config not found: $btop_config_file"
+    return $?
+  fi
+
+  btop_config_dir="${btop_config_file%/*}"
+  temporary_file="$(mktemp "$btop_config_dir/.btop.conf.XXXXXX")" || {
+    fail_module "btop: could not create a temporary config"
+    return $?
+  }
+
+  if ! awk -v theme_file="$btop_theme_file" '
+    /^[[:space:]]*color_theme[[:space:]]*=/ {
+      printf "color_theme = \"%s\"\n", theme_file
+      replaced = 1
+      next
+    }
+    { print }
+    END { exit(replaced ? 0 : 1) }
+  ' "$btop_config_file" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    fail_module "btop: color_theme setting not found or could not be updated"
+    return $?
+  fi
+
+  if ! mv -f "$temporary_file" "$btop_config_file"; then
+    rm -f "$temporary_file"
+    fail_module "btop: failed to replace config"
+    return $?
+  fi
+
+  log_info "btop: applied '$profile'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: btop apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_btop "$2"
+}
+
+main "$@"

@@ -1,0 +1,106 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+ghostty_is_running() {
+  pgrep -x ghostty >/dev/null 2>&1 || pgrep -x Ghostty >/dev/null 2>&1
+}
+
+reload_ghostty_linux() {
+  ghostty_service="app-com.mitchellh.ghostty.service"
+
+  if command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user --quiet is-active "$ghostty_service"; then
+    systemctl reload --user "$ghostty_service"
+    return $?
+  fi
+
+  pkill -USR2 -x ghostty >/dev/null 2>&1 \
+    || pkill -USR2 -x Ghostty >/dev/null 2>&1
+}
+
+reload_ghostty_macos() {
+  reload_script='
+tell application "System Events"
+  if exists application process "Ghostty" then
+    tell application process "Ghostty"
+      set frontmost to true
+      keystroke "," using {command down, shift down}
+    end tell
+  end if
+end tell
+'
+
+  osascript -e "$reload_script" >/dev/null 2>&1
+}
+
+apply_ghostty() {
+  theme="$1"
+  profile="$(theme_value ghostty "$theme")" || {
+    skip_module "ghostty: no profile mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if [ -z "$profile" ]; then
+    skip_module "ghostty: no profile mapped for theme '$theme'; skipped"
+    return $?
+  fi
+  if ! is_safe_name "$profile"; then
+    fail_module "ghostty: invalid profile mapping for theme '$theme'"
+    return $?
+  fi
+
+  ghostty_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ghostty"
+  profile_file="$ghostty_config_dir/themes/$profile"
+  current_file="$ghostty_config_dir/themes/current"
+
+  if [ ! -f "$profile_file" ]; then
+    skip_module "ghostty: profile '$profile' is not installed; skipped"
+    return $?
+  fi
+  if [ ! -d "${current_file%/*}" ]; then
+    fail_module "ghostty: themes directory not found: ${current_file%/*}"
+    return $?
+  fi
+
+  if ! atomic_copy "$profile_file" "$current_file"; then
+    fail_module "ghostty: failed to update current profile"
+    return $?
+  fi
+
+  if ghostty_is_running; then
+    if is_linux; then
+      reload_ghostty_linux || {
+        fail_module "ghostty: failed to reload running Ghostty"
+        return $?
+      }
+    elif is_macos; then
+      reload_ghostty_macos || {
+        fail_module "ghostty: failed to reload running Ghostty"
+        return $?
+      }
+    else
+      skip_module "ghostty: profile updated but OS is unsupported for reloading"
+      return $?
+    fi
+  fi
+
+  log_info "ghostty: applied '$profile'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: ghostty apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_ghostty "$2"
+}
+
+main "$@"

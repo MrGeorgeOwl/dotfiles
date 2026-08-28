@@ -1,0 +1,95 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+apply_wallpaper_linux() {
+  wallpaper_path="$1"
+  wallpaper_uri="file://$wallpaper_path"
+  escaped_uri="$(printf '%s' "$wallpaper_uri" | sed 's/\\/\\\\/g; s/"/\\"/g')" || return 1
+  plasma_script="
+const ds = desktops();
+for (const desktop of ds) {
+  desktop.wallpaperPlugin = 'org.kde.image';
+  desktop.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+  desktop.writeConfig('Image', \"$escaped_uri\");
+}
+"
+
+  command -v qdbus6 >/dev/null 2>&1 || return 1
+  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$plasma_script"
+}
+
+apply_wallpaper_macos() {
+  wallpaper_path="$1"
+
+  osascript - "$wallpaper_path" >/dev/null 2>&1 <<'EOF'
+on run argv
+  set wallpaperPath to item 1 of argv
+
+  tell application "System Events"
+    repeat with desktopItem in desktops
+      set picture of desktopItem to wallpaperPath
+    end repeat
+  end tell
+end run
+EOF
+}
+
+apply_wallpaper() {
+  theme="$1"
+  wallpaper_file="$(theme_value wallpaper "$theme")" || {
+    skip_module "wallpaper: no file mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if [ -z "$wallpaper_file" ]; then
+    skip_module "wallpaper: no file mapped for theme '$theme'; skipped"
+    return $?
+  fi
+  if ! is_safe_name "$wallpaper_file"; then
+    fail_module "wallpaper: invalid file mapping for theme '$theme'"
+    return $?
+  fi
+
+  wallpapers_dir="${CHAMELEON_WALLPAPERS_DIR:-$HOME/Wallpapers}"
+  wallpaper_path="$wallpapers_dir/$wallpaper_file"
+
+  if [ ! -f "$wallpaper_path" ]; then
+    fail_module "wallpaper: file not found: $wallpaper_path"
+    return $?
+  fi
+
+  if is_linux; then
+    if ! apply_wallpaper_linux "$wallpaper_path" >/dev/null 2>&1; then
+      fail_module "wallpaper: failed to set wallpaper with qdbus6"
+      return $?
+    fi
+  elif is_macos; then
+    if ! apply_wallpaper_macos "$wallpaper_path"; then
+      fail_module "wallpaper: failed to set wallpaper with osascript"
+      return $?
+    fi
+  else
+    skip_module "wallpaper: unsupported OS; skipped"
+    return $?
+  fi
+
+  log_info "wallpaper: applied '$wallpaper_file'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: wallpaper apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_wallpaper "$2"
+}
+
+main "$@"
