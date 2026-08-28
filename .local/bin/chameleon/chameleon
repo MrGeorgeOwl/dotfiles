@@ -1,0 +1,267 @@
+#!/usr/bin/env sh
+
+set -u
+
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+  */*) ;;
+  *) SCRIPT_PATH="$(command -v "$SCRIPT_PATH")" ;;
+esac
+CHAMELEON_ROOT="$(CDPATH= cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+CHAMELEON_CONFIG_DIR="$HOME/.config/chameleon"
+CHAMELEON_MODULES_DIR="$CHAMELEON_ROOT/modules"
+export CHAMELEON_ROOT CHAMELEON_CONFIG_DIR
+
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+MODULES="ghostty btop nvim wallpaper"
+
+usage() {
+  cat <<'EOF'
+Usage: chameleon [options] <theme>
+
+Apply a theme across configured components.
+
+Options:
+  -c, --component NAME  Apply only NAME. May be specified more than once.
+  -ff, --fail-fast      Stop at the first skipped or failed component.
+      --list            List available themes.
+      --list-components List available components.
+  -h, --help            Show this help.
+EOF
+}
+
+is_known_module() {
+  sought_module="$1"
+
+  for known_module in $MODULES; do
+    [ "$known_module" = "$sought_module" ] && return 0
+  done
+
+  return 1
+}
+
+is_selected_module() {
+  sought_module="$1"
+
+  for selected_module in $SELECTED_MODULES; do
+    [ "$selected_module" = "$sought_module" ] && return 0
+  done
+
+  return 1
+}
+
+add_component() {
+  component="$1"
+
+  if ! is_known_module "$component"; then
+    printf 'chameleon: unknown component: %s\n' "$component" >&2
+    return 1
+  fi
+
+  if ! is_selected_module "$component"; then
+    SELECTED_MODULES="${SELECTED_MODULES}${SELECTED_MODULES:+ }${component}"
+  fi
+}
+
+should_run_module() {
+  module="$1"
+
+  [ "$COMPONENT_FILTERED" -eq 0 ] && return 0
+  is_selected_module "$module"
+}
+
+record_module_result() {
+  module="$1"
+  result="$2"
+
+  case "$result" in
+    0)
+      MODULE_SUCCESSES=$((MODULE_SUCCESSES + 1))
+      SUMMARY_LINES="${SUMMARY_LINES}${module}: applied
+"
+      ;;
+    "$CHAMELEON_SKIP")
+      MODULE_SKIPS=$((MODULE_SKIPS + 1))
+      SUMMARY_LINES="${SUMMARY_LINES}${module}: skipped
+"
+      ;;
+    *)
+      MODULE_FAILURES=$((MODULE_FAILURES + 1))
+      SUMMARY_LINES="${SUMMARY_LINES}${module}: failed
+"
+      ;;
+  esac
+}
+
+run_module() {
+  module="$1"
+  theme="$2"
+  module_path="$CHAMELEON_MODULES_DIR/$module"
+
+  if [ ! -x "$module_path" ]; then
+    printf 'chameleon: module is missing or not executable: %s\n' "$module" >&2
+    MODULE_RESULT=1
+  elif "$module_path" apply "$theme"; then
+    MODULE_RESULT=0
+  else
+    MODULE_RESULT=$?
+  fi
+
+  record_module_result "$module" "$MODULE_RESULT"
+}
+
+print_summary() {
+  theme="$1"
+
+  printf 'summary for theme "%s"\n' "$theme"
+  printf '%s' "$SUMMARY_LINES"
+  printf 'applied=%s skipped=%s failed=%s\n' \
+    "$MODULE_SUCCESSES" \
+    "$MODULE_SKIPS" \
+    "$MODULE_FAILURES"
+}
+
+main() {
+  SELECTED_MODULES=""
+  COMPONENT_FILTERED=0
+  FAIL_FAST=0
+  LIST_THEMES=0
+  LIST_COMPONENTS=0
+  theme=""
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --list)
+        LIST_THEMES=1
+        shift
+        ;;
+      --list-components)
+        LIST_COMPONENTS=1
+        shift
+        ;;
+      -ff|--fail-fast)
+        FAIL_FAST=1
+        shift
+        ;;
+      -c|--component)
+        if [ "$#" -lt 2 ]; then
+          printf 'chameleon: option %s requires a component name\n' "$1" >&2
+          return 2
+        fi
+        add_component "$2" || return 2
+        COMPONENT_FILTERED=1
+        shift 2
+        ;;
+      --component=*)
+        component="${1#--component=}"
+        if [ -z "$component" ]; then
+          printf 'chameleon: option --component requires a component name\n' >&2
+          return 2
+        fi
+        add_component "$component" || return 2
+        COMPONENT_FILTERED=1
+        shift
+        ;;
+      --)
+        shift
+        if [ "$#" -ne 1 ] || [ -n "$theme" ]; then
+          usage >&2
+          return 2
+        fi
+        theme="$1"
+        shift
+        ;;
+      -*)
+        printf 'chameleon: unknown option: %s\n' "$1" >&2
+        usage >&2
+        return 2
+        ;;
+      *)
+        if [ -n "$theme" ]; then
+          usage >&2
+          return 2
+        fi
+        theme="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [ "$LIST_THEMES" -eq 1 ] || [ "$LIST_COMPONENTS" -eq 1 ]; then
+    if [ -n "$theme" ] || [ -n "$SELECTED_MODULES" ] || [ "$FAIL_FAST" -eq 1 ]; then
+      printf 'chameleon: list options cannot be combined with a theme or other options\n' >&2
+      return 2
+    fi
+
+    if [ "$LIST_THEMES" -eq 1 ]; then
+      list_theme_names
+    fi
+    if [ "$LIST_COMPONENTS" -eq 1 ]; then
+      printf '%s\n' $MODULES
+    fi
+    return 0
+  fi
+
+  if [ -z "$theme" ]; then
+    usage >&2
+    return 2
+  fi
+
+  if ! is_safe_name "$theme" || ! theme_exists "$theme"; then
+    printf 'chameleon: unknown theme: %s\n' "$theme" >&2
+    printf 'chameleon: run `chameleon --list` to see valid themes\n' >&2
+    return 2
+  fi
+
+  MODULE_SUCCESSES=0
+  MODULE_SKIPS=0
+  MODULE_FAILURES=0
+  SUMMARY_LINES=""
+  STOPPED_EARLY=0
+
+  for module in $MODULES; do
+    should_run_module "$module" || continue
+
+    run_module "$module" "$theme"
+
+    if [ "$FAIL_FAST" -eq 1 ] && [ "$MODULE_RESULT" -ne 0 ]; then
+      STOPPED_EARLY=1
+      break
+    fi
+  done
+
+  if [ "$COMPONENT_FILTERED" -eq 0 ] \
+    && [ "$STOPPED_EARLY" -eq 0 ] \
+    && [ "$MODULE_SKIPS" -eq 0 ] \
+    && [ "$MODULE_FAILURES" -eq 0 ]; then
+    if atomic_write_line "$CHAMELEON_CONFIG_DIR/current" "$theme"; then
+      SUMMARY_LINES="${SUMMARY_LINES}current: updated
+"
+    else
+      printf 'chameleon: failed to update current theme\n' >&2
+      MODULE_FAILURES=$((MODULE_FAILURES + 1))
+      SUMMARY_LINES="${SUMMARY_LINES}current: failed
+"
+    fi
+  elif [ "$COMPONENT_FILTERED" -eq 0 ]; then
+    SUMMARY_LINES="${SUMMARY_LINES}current: unchanged
+"
+  else
+    SUMMARY_LINES="${SUMMARY_LINES}current: unchanged (component filter)\n"
+  fi
+
+  print_summary "$theme"
+
+  if [ "$STOPPED_EARLY" -eq 1 ] || [ "$MODULE_FAILURES" -gt 0 ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+main "$@"
