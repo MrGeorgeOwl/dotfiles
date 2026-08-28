@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Commit"
+  short_description: "Create concise conventional git commits."
+  default_prompt: "Use this skill when committing changes. Inspect the staged and unstaged work, choose feat, fix, or refact, and write a short commit message under 120 characters."

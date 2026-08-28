@@ -4,97 +4,56 @@ else
   export EDITOR='nvim'
 fi
 
-ZINIT_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/zinit/zinit.git"
+export PATH="/home/owl/.local/bin:$PATH"
 
-if [ ! -d $ZINIT_HOME ]; then 
-    mkdir -p "$(dirname $ZINIT_HOME)"
-    git clone https://github.com/zdharma-continuum/zinit.git "$ZINIT_HOME"
-fi
+# history
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_FIND_NO_DUPS
+setopt HIST_SAVE_NO_DUPS
+setopt SHARE_HISTORY
 
-# Load zinit
-source "${ZINIT_HOME}/zinit.zsh"
+# load search functionality
+autoload -U up-line-or-beginning-search
+autoload -U down-line-or-beginning-search
 
-# Add in zsh plugins
-zinit light zsh-users/zsh-syntax-highlighting
-zinit light zsh-users/zsh-completions
-zinit light zsh-users/zsh-autosuggestions
+# make widgets from newly load functions
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
 
-# Add in snippets
-zinit snippet OMZP::kubectl
-zinit snippet OMZP::python
+# bind search history keys
+bindkey '^P' up-line-or-beginning-search
+bindkey '^N' down-line-or-beginning-search
 
-# Load completions
-autoload -U compinit && compinit
+# bind incremental search keys
+bindkey '^R' history-incremental-search-backward
+# end history
 
-# Keybindings
-# alt+<- | alt+->
-bindkey -v
-bindkey "^[[1;3C" forward-word
-bindkey "^[[1;3D" backward-word
-bindkey '^p' history-search-backward
-bindkey '^n' history-search-forward
-bindkey "^r" history-incremental-pattern-search-backward
+# bind autocomplete suggestions
 bindkey '^F' autosuggest-accept
 
-# History
-HISTSIZE=5000
-HISTFILE=~/.zsh_history
-SAVEHIST=$HISTSIZE
-HISTDUP=erase
-setopt appendhistory
-setopt sharehistory
-setopt hist_ignore_space
-setopt hist_ignore_all_dups
-setopt hist_save_no_dups
-setopt hist_ignore_dups
-setopt hist_find_no_dups
+bindkey -v
 
-# Completion styling
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
-zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+# The following lines were added by compinstall
+zstyle :compinstall filename '/home/owl/.zshrc'
 
-# Alias
-alias ls="ls --color"
-alias ll="ls -la"
-alias d=docker
-alias nv=nvim
+autoload -Uz compinit
+compinit
+# End of lines added by compinstall
 
-alias g="git"
-
-## kubernetes 
-alias kcc="k config use-context"
-alias kgc="k config get-contexts"
-alias kcn="k config set-context --current --namespace"
-alias kgp="k get pods"
-alias kgn="k get namespaces"
-alias kgd="k get deployments"
-
-
-# Exports
-export PATH="/opt/homebrew/opt/sqlite/bin:$PATH"
-export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
-export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"
-export PATH="/Users/heorhi/scripts:$PATH"
-export HOMEBREW_NO_AUTO_UPDATE=1
-export BAT_PAGING='never'
-
-# Java
-JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk-11.jdk/Contents/Home" 
-JAVA_HOME="/Library/Java/JavaVirtualMachines/jdk-11.jdk/Contents/Home" 
-[[ "$PATH" == *"$HOME/bin:"* ]] || export PATH="$HOME/bin:$PATH"
-
-export PATH="/opt/homebrew/opt/swagger-codegen@2/bin:$PATH"
-
-
-# Created by `pipx` on 2024-06-06 11:36:17
-export PATH="$PATH:/Users/heorhi/.local/bin"
-
-# Fixing terminal colors in tmux
-export TERM=xterm-256color
-export COLORTERM=truecolor
+# Show inline suggestions from command history while typing.
+source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
 
 eval "$(zoxide init zsh)"
 
-eval "$(starship init zsh)"
+if [ -f ~/.zsh_vcs ]; then . ~/.zsh_vcs; fi
+
+# Alias definitions.
+# You may want to put all your additions into a separate file like
+# ~/.bash_aliases, instead of adding them here directly.
+if [ -f ~/.zsh_aliases ]; then . ~/.zsh_aliases; fi
+if [ -f ~/.zsh_customs ]; then . ~/.zsh_customs; fi

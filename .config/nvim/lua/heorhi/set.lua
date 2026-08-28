@@ -1,5 +1,6 @@
 vim.opt.nu = true
 vim.opt.relativenumber = true
+vim.opt.clipboard = "unnamedplus"
 
 vim.opt.tabstop = 4
 vim.opt.softtabstop = 4
@@ -12,9 +13,8 @@ vim.opt.hlsearch = false
 vim.opt.incsearch = true
 
 vim.opt.scrolloff = 15
+vim.opt.splitright = true
 
 vim.opt.updatetime = 50
 
 vim.opt.termguicolors = true
-
-vim.opt.colorcolumn = "119"

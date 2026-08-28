@@ -1,0 +1,11 @@
+config-file = ?"~/.config/ghostty/themes/current"
+font-family = "JetBrains Mono"
+font-size = 14
+
+background-opacity = 1
+window-padding-x = 10
+window-padding-y = 10
+shell-integration = "zsh"
+cursor-style-blink = false
+cursor-style = block
+shell-integration-features = no-cursor

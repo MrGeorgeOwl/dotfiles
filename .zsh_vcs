@@ -1,0 +1,44 @@
+# Prompt: user + path + Git state on the first line, input on the second.
+autoload -Uz vcs_info
+setopt PROMPT_SUBST
+
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' check-for-changes true
+zstyle ':vcs_info:git:*' stagedstr ' +'
+zstyle ':vcs_info:git:*' unstagedstr ' *'
+zstyle ':vcs_info:git:*' formats '%b%c%u%m'
+zstyle ':vcs_info:git:*' actionformats '%b|%a%c%u%m'
+zstyle ':vcs_info:git+set-message:*' hooks git-untracked
+
++vi-git-untracked() {
+  if git status --porcelain --untracked-files=normal 2>/dev/null | command grep -q '^??'; then
+    hook_com[misc]+=' ?'
+  fi
+}
+
+precmd() {
+  vcs_info
+}
+
+prompt_symbol='❯'
+
+zle-keymap-select() {
+  case $KEYMAP in
+    vicmd) prompt_symbol='❮' ;;
+    *) prompt_symbol='❯' ;;
+  esac
+
+  zle reset-prompt
+}
+
+zle-line-init() {
+  prompt_symbol='❯'
+  zle reset-prompt
+}
+
+zle -N zle-keymap-select
+zle -N zle-line-init
+
+PROMPT='%n %1~ ${vcs_info_msg_0_}
+${prompt_symbol} '
+RPROMPT=''

@@ -1,1 +1,6 @@
 lazy-lock.json
+*.tar
+*.gz
+.codex
+!.claude/settings.local.json
+.config/btop/btop.log
