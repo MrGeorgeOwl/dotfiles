@@ -20,8 +20,11 @@ Choose the type by the main purpose of the commit:
 - `fix`: bug is fixed.
 - `refact`: behaviour is not changed but structure of the code is changed with improving code quality in mind.
 - `chore`: maintenance routine that doesn't change the project behaviour. 
+- `doc`: edits in documentation artifacts and docstrings inside code
+- `infra`: modifications in CI/CD pipelines, deployment configuration files.
 
-Keep `<commit msg>` a short summary of what was done, under 120 characters including the prefix.
+Keep `<commit msg>` a short summary of what was done, under 120 characters including the prefix. 
+Keep the comment to the commit message under 180 characters.
 
 ## Workflow
 
@@ -35,6 +38,6 @@ Keep `<commit msg>` a short summary of what was done, under 120 characters inclu
 git commit -m "<feat|fix|refact>: <commit msg>"
 ```
 
-Do not use other conventional-commit types.
-
-Do not include bot slash commands `/assign` or `/label`.
+## Rules
+- Do not use other conventional-commit types.
+- Do not include bot slash commands `/assign` or `/label`.
