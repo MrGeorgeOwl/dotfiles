@@ -52,6 +52,7 @@ Create GitHub pull requests from the current branch while respecting the reposit
 - Run `gh pr create --title ... --body ...`.
 - Prefer the existing upstream/head branch. Add `--base` or `--head` only when repo state or user instructions require it.
 - If `gh pr create` reports that the branch must be pushed first, push it and retry.
+- Maximum allowed characters 600
 
 7. Report the result.
 
