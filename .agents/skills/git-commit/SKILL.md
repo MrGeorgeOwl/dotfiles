@@ -23,7 +23,7 @@ Choose the type by the main purpose of the commit:
 - `doc`: edits in documentation artifacts and docstrings inside code
 - `infra`: modifications in CI/CD pipelines, deployment configuration files.
 
-Keep `<commit msg>` a short summary of what was done, under 120 characters including the prefix. 
+Keep `<commit msg>` a short summary of what was done, under 120 characters including the prefix.
 Keep the comment to the commit message under 180 characters.
 
 ## Workflow
