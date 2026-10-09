@@ -7,7 +7,8 @@ usage() {
 Usage: agent-sync [--dry-run]
 
 Synchronize agent setup from this dotfiles repository:
-  - .agents/skills -> ~/.agents/skills and ~/.claude/skills
+  - .agents/skills -> ~/.agents/skills, ~/.codex/skills, ~/.claude/skills,
+    ~/.grok/skills, and ~/.pi/agent/skills
   - .agents/prompts -> ~/.codex/prompts and ~/.claude/prompts, if prompt files exist
   - .agents/codex -> ~/.codex
   - .agents/claude/commands -> ~/.claude/commands
@@ -109,16 +110,21 @@ agents_dir="$root/.agents"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 agents_home="${AGENTS_HOME:-$HOME/.agents}"
 claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+grok_home="${GROK_HOME:-$HOME/.grok}"
 pi_home="${PI_HOME:-$HOME/.pi}"
 
 log "source: $agents_dir"
 log "codex:  $codex_home"
 log "agents: $agents_home"
 log "claude: $claude_home"
+log "grok:   $grok_home"
 log "pi:     $pi_home"
 
 copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
+copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
 copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
+copy_dir_contents "$agents_dir/skills" "$grok_home/skills"
+copy_dir_contents "$agents_dir/skills" "$pi_home/agent/skills"
 
 if has_real_files "$agents_dir/prompts"; then
   copy_dir_contents "$agents_dir/prompts" "$codex_home/prompts"
