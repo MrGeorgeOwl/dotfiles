@@ -4,3 +4,5 @@ lazy-lock.json
 .codex
 !.claude/settings.local.json
 .config/btop/btop.log
+TASKS.md
+.DS_Store

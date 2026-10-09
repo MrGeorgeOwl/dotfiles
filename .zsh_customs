@@ -1,4 +1,0 @@
-# The Chameleon launcher is kept with its modules, so expose that directory.
-if [[ ":$PATH:" != *":$HOME/.local/bin/chameleon:"* ]]; then
-  export PATH="$HOME/.local/bin/chameleon:$PATH"
-fi
