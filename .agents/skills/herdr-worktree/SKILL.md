@@ -15,6 +15,8 @@ test "${HERDR_ENV:-}" = 1
 
 If that fails, say you are not inside Herdr and stop. Do not create a git worktree by hand.
 
+Use the installed CLI as the authority: run `herdr --help`, then `herdr worktree`, `herdr tab`, and `herdr agent` to inspect syntax without executing mutations. Read IDs and paths from JSON responses; never invent them. In the examples below, set shell variables from the user's request or those responses and double-quote all substitutions.
+
 ## Name
 
 The worktree should be named after the passed Jira issue or with the passed by user name, otherwise ask the user or pick up the name from the purpose of worktree described by user's prompt.
@@ -28,8 +30,10 @@ The worktree should be named after the passed Jira issue or with the passed by u
 The repo is the checkout the user named, otherwise the current one:
 
 ```bash
-git rev-parse --show-toplevel
+git -C "$repo_path" rev-parse --show-toplevel
 ```
+
+Set `repo_path` to the requested checkout, or `$PWD`, before running that command. Store its output as `repo_root`.
 
 Choose the agent from that repo root. The new checkout lives under `~/.herdr/worktrees` and must not affect the choice.
 
@@ -39,7 +43,7 @@ Choose the agent from that repo root. The new checkout lives under `~/.herdr/wor
 Unless the user names a base, branch from the remote default:
 
 ```bash
-git symbolic-ref --short refs/remotes/origin/HEAD
+git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD
 ```
 
 If that ref is missing, use `main` when it exists, otherwise `master`. Pass it as `--base`.
@@ -47,55 +51,66 @@ If that ref is missing, use `main` when it exists, otherwise `master`. Pass it a
 ## Reuse
 
 ```bash
-herdr worktree list --cwd <repo-root>
+herdr worktree list --cwd "$repo_root"
 ```
 
-If a linked worktree already has this branch, open it. Do not create a second checkout.
+If a linked worktree already has this branch, reuse it. Do not create a second checkout.
+
+If the list entry has `open_workspace_id`, use it as `workspace_id` and skip both open and create. Otherwise open the existing checkout:
 
 ```bash
-herdr worktree open --cwd <repo-root> --branch <name> --label <name> --focus
+herdr worktree open --cwd "$repo_root" --branch "$name" --label "$name" --focus
 ```
 
-If it is already open (`already_open` is true, or the list entry has `open_workspace_id`), focus that workspace and skip create:
+Read the workspace ID and checkout path from the response. If `already_open` is true, reuse the returned workspace. For an existing workspace, discover its tabs and panes rather than assuming it has a creation response's `.result.root_pane`:
 
 ```bash
-herdr workspace focus <workspace_id>
+herdr tab list --workspace "$workspace_id"
+herdr pane list --workspace "$workspace_id"
 ```
 
 ## Create
 
 ```bash
-herdr worktree create --cwd <repo-root> --branch <name> --base <base> --label <name> --focus
+herdr worktree create --cwd "$repo_root" --branch "$name" --base "$base" --label "$name" --focus
 ```
 
 Do not pass `--path`. Herdr stores the checkout under its worktree directory, slugged from the branch.
 
 ## Tabs
 
-Leave exactly two tabs, in order: `agent`, then `terminal`. Do not add any other tab.
+For a newly created workspace, leave exactly two tabs, in order: `agent`, then `terminal`. For a reused workspace, preserve existing tabs and their order; ensure an `agent` tab and a `terminal` tab exist without closing any user tabs.
 
 1. Rename the workspace's first tab:
 
 ```bash
-herdr tab rename <tab_id> agent
+herdr tab rename "$agent_tab_id" agent
 ```
 
-2. Start the agent in `.result.root_pane.pane_id`. Its name is the branch lowercased, with every character outside `[a-z0-9_-]` replaced by `-`, truncated to 32 characters, and matching `[a-z][a-z0-9_-]{0,31}`. If `herdr agent list` already has that name, append `-2`, `-3`, and so on, still within 32 characters.
+2. For a new workspace, use `.result.root_pane.pane_id` as `pane_id` and the returned tab ID as `agent_tab_id`. For a reused workspace, select the pane from its `agent` tab using the tab/pane listings. Start only in an available interactive shell pane; do not overwrite a running process.
+
+Derive the agent name by lowercasing the branch and replacing every character outside `[a-z0-9_-]` with `-`. If the result does not start with `[a-z]`, prefix `agent-`, then truncate to 32 characters. Check `herdr agent list` for collisions. For each suffix (`-2`, `-3`, and so on), truncate the unsuffixed name to `32 - length(suffix)` before appending it. The final name must match `[a-z][a-z0-9_-]{0,31}` and be unique.
 
 ```bash
-herdr agent start <agent-name> --kind claude --pane <pane_id>
+herdr agent start "$agent_name" --kind "$agent_kind" --pane "$pane_id"
 ```
 
-Use `--kind pi` when the repo root is outside `/Users/heorhi/code/splitmetrics`. If start returns `agent_not_ready`, leave the pane alone and say so.
+Set `agent_kind` to `claude` or `pi` using the repo-root rule above. If start returns `agent_not_ready`, leave the pane alone and report that the agent is not ready.
 
 3. Open a shell tab at the new checkout. This keeps focus on the agent tab:
 
 ```bash
-herdr tab create --workspace <workspace_id> --cwd <worktree.path> --label terminal --no-focus
+herdr tab create --workspace "$workspace_id" --cwd "$worktree_path" --label terminal --no-focus
 ```
 
-When reusing a workspace, list its tabs first. Add or rename only a missing `agent` or `terminal` tab. Do not start a second agent when the `agent` tab already has one. Do not close tabs the user already had.
+When reusing a workspace, list its tabs first. Reuse existing `agent` and `terminal` tabs. For a missing tab, rename a suitable unused shell tab or create one with the checkout cwd and `--no-focus`; preserve tabs occupied by user processes. Use the returned tab and pane IDs for a newly created `agent` tab. Do not start a second agent when the `agent` tab already has one. Do not close tabs the user already had.
 
 ## Done
 
-Focus the user's herdr session on newly created worktree
+Focus the `agent` tab in the created or reused worktree workspace, not just the workspace (which might have the terminal tab selected):
+
+```bash
+herdr tab focus "$agent_tab_id"
+```
+
+Report the branch, checkout path, and whether the worktree was created or reused. Do not prompt the agent unless the user requested a handoff.
