@@ -39,3 +39,21 @@ Coding agents are configured per theme with `claude=` and `grok=`:
 Both modules keep every other setting, write nothing when the value is already
 set, and are a no-op when the agent is not installed. pi follows the terminal
 colours on its own and needs no module.
+
+The `desktop` component switches the desktop environment between light and
+dark. It is opt-in: a theme sets `desktop=light` or `desktop=dark`, and without
+it the module does nothing.
+
+- On KDE Plasma it switches the Theme picker in System Settings > Colors &
+  Themes: light themes get Breeze, dark ones Breeze Dark. Set `kde=breeze` or
+  `kde=breeze-dark` to override, or use `kde=lookandfeel:<package id>` or
+  `kde=colorscheme:<name>` for other themes. The layout is never reset. Applying
+  a theme turns off Plasma's Automatic mode. GTK apps follow through KDE's own
+  GTK settings sync.
+- On GNOME it sets `org.gnome.desktop.interface color-scheme` (untested).
+- On macOS it only acts with `desktop_macos=appearance`, and the first run asks
+  for permission to control System Events.
+
+It does nothing when the desktop is unknown, the tools are missing, or the
+theme is already active. It runs before `wallpaper`, so applying the global
+theme cannot leave the wrong wallpaper behind.

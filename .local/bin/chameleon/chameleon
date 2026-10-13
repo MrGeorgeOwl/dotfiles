@@ -14,7 +14,7 @@ export CHAMELEON_ROOT CHAMELEON_CONFIG_DIR
 
 . "$CHAMELEON_ROOT/lib/common.sh"
 
-MODULES="ghostty btop nvim herdr claude grok wallpaper"
+MODULES="ghostty btop nvim herdr claude grok desktop wallpaper"
 
 usage() {
   cat <<'EOF'
