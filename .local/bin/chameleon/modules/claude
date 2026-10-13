@@ -76,32 +76,42 @@ apply_claude() {
     return $?
   fi
 
+  # Every mode goes through one custom theme file. Claude Code watches
+  # ~/.claude/themes and repaints running sessions when that file changes, but
+  # it only reads a changed `theme` setting at startup.
   case "$mode" in
     custom)
       source_file="$CHAMELEON_CONFIG_DIR/claude/$theme.json"
-      slug="chameleon-$theme"
       if [ ! -f "$source_file" ]; then
         skip_module "claude: custom theme '$source_file' is not installed; skipped"
         return $?
       fi
-      mkdir -p "$claude_dir/themes" || {
-        fail_module "claude: could not create $claude_dir/themes"
-        return $?
-      }
-      if ! atomic_copy "$source_file" "$claude_dir/themes/$slug.json"; then
-        fail_module "claude: failed to install custom theme '$slug'"
-        return $?
-      fi
-      claude_theme="custom:$slug"
       ;;
     *)
-      if ! is_claude_preset "$mode"; then
+      if ! is_claude_preset "$mode" || [ "$mode" = "auto" ]; then
         fail_module "claude: unknown mode '$mode' for theme '$theme'"
         return $?
       fi
-      claude_theme="$mode"
+      source_file="$(mktemp "${TMPDIR:-/tmp}/chameleon-claude.XXXXXX")" || {
+        fail_module "claude: could not create a temporary theme"
+        return $?
+      }
+      printf '{\n  "name": "chameleon (%s)",\n  "base": "%s"\n}\n' "$mode" "$mode" > "$source_file"
       ;;
   esac
+
+  mkdir -p "$claude_dir/themes" || {
+    fail_module "claude: could not create $claude_dir/themes"
+    return $?
+  }
+  atomic_copy "$source_file" "$claude_dir/themes/chameleon.json"
+  copy_result=$?
+  [ "$mode" = "custom" ] || rm -f "$source_file"
+  if [ "$copy_result" -ne 0 ]; then
+    fail_module "claude: failed to install the chameleon theme"
+    return $?
+  fi
+  claude_theme="custom:chameleon"
 
   settings_file="$(resolve_path "$claude_dir/settings.json")" || {
     fail_module "claude: could not resolve settings.json"
@@ -113,7 +123,7 @@ apply_claude() {
     return $?
   fi
 
-  log_info "claude: applied '$claude_theme'"
+  log_info "claude: applied '$mode' for theme '$theme'"
 }
 
 main() {
