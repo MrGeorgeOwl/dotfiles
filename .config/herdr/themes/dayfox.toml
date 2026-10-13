@@ -4,6 +4,7 @@ name = "terminal"
 [theme.custom]
 accent = "#2848a9"
 panel_bg = "#f6f2ee"
+sidebar_bg = "#f6f2ee"
 surface0 = "#e7d2be"
 surface1 = "#d3c7bb"
 surface_dim = "#ebe5df"

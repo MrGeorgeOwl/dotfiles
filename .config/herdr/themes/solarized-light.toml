@@ -1,2 +1,6 @@
 [theme]
 name = "solarized-light"
+
+[theme.custom]
+panel_bg = "#fdf6e3"
+sidebar_bg = "#fdf6e3"
