@@ -1,0 +1,200 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+# Theme keys:
+#   desktop=light|dark   opt-in appearance; without it the module does nothing
+#   kde=breeze|breeze-dark
+#                        the Theme picker in System Settings > Colors & Themes.
+#                        Defaults to breeze for light and breeze-dark for dark.
+#   kde=lookandfeel:ID   any global theme package, e.g. org.kde.breezetwilight.desktop
+#   kde=colorscheme:NAME colour scheme only, e.g. BreezeLight
+#   desktop_macos=appearance
+#                        opt in to switching macOS light/dark mode
+
+detect_desktop() {
+  if is_macos; then
+    printf 'macos\n'
+    return 0
+  fi
+
+  case ":${XDG_CURRENT_DESKTOP:-}:" in
+    *:KDE:*) printf 'kde\n' ;;
+    *:GNOME:*) printf 'gnome\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+kde_read() {
+  kreadconfig6 --file kdeglobals --group "$1" --key "$2" 2>/dev/null
+}
+
+apply_kde_lookandfeel() {
+  package="$1"
+
+  # KConfig drops the key when it equals Plasma's default, Breeze.
+  current="$(kde_read KDE LookAndFeelPackage)"
+  if [ "${current:-org.kde.breeze.desktop}" = "$package" ]; then
+    log_info "desktop: KDE global theme '$package' already active"
+    return 0
+  fi
+  if ! command -v plasma-apply-lookandfeel >/dev/null 2>&1; then
+    log_info "desktop: plasma-apply-lookandfeel not found; nothing to do"
+    return 0
+  fi
+
+  # Without --resetLayout the panels and widgets stay as they are.
+  plasma-apply-lookandfeel --apply "$package" >/dev/null 2>&1 || {
+    fail_module "desktop: failed to apply KDE global theme '$package'"
+    return $?
+  }
+  log_info "desktop: applied KDE global theme '$package'"
+}
+
+apply_kde_colorscheme() {
+  scheme="$1"
+
+  if [ "$(kde_read General ColorScheme)" = "$scheme" ]; then
+    log_info "desktop: KDE colour scheme '$scheme' already active"
+    return 0
+  fi
+  if ! command -v plasma-apply-colorscheme >/dev/null 2>&1; then
+    log_info "desktop: plasma-apply-colorscheme not found; nothing to do"
+    return 0
+  fi
+
+  plasma-apply-colorscheme "$scheme" >/dev/null 2>&1 || {
+    fail_module "desktop: failed to apply KDE colour scheme '$scheme'"
+    return $?
+  }
+  log_info "desktop: applied KDE colour scheme '$scheme'"
+}
+
+apply_kde() {
+  theme="$1"
+  appearance="$2"
+  kde_value="$(theme_value kde "$theme" 2>/dev/null || true)"
+
+  if [ -z "$kde_value" ]; then
+    case "$appearance" in
+      light) kde_value="breeze" ;;
+      dark) kde_value="breeze-dark" ;;
+    esac
+  fi
+
+  if ! command -v kreadconfig6 >/dev/null 2>&1; then
+    log_info "desktop: kreadconfig6 not found; nothing to do"
+    return 0
+  fi
+
+  case "$kde_value" in
+    breeze) apply_kde_lookandfeel org.kde.breeze.desktop ;;
+    breeze-dark) apply_kde_lookandfeel org.kde.breezedark.desktop ;;
+    lookandfeel:*|colorscheme:*)
+      name="${kde_value#*:}"
+      if ! is_safe_name "$name"; then
+        fail_module "desktop: invalid kde value '$kde_value'"
+        return $?
+      fi
+      case "$kde_value" in
+        lookandfeel:*) apply_kde_lookandfeel "$name" ;;
+        *) apply_kde_colorscheme "$name" ;;
+      esac
+      ;;
+    *)
+      fail_module "desktop: unknown kde value '$kde_value'"
+      return $?
+      ;;
+  esac
+}
+
+apply_gnome() {
+  appearance="$1"
+
+  if ! command -v gsettings >/dev/null 2>&1; then
+    log_info "desktop: gsettings not found; nothing to do"
+    return 0
+  fi
+
+  case "$appearance" in
+    light) scheme="default" ;;
+    dark) scheme="prefer-dark" ;;
+  esac
+
+  current="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")"
+  [ "$current" = "$scheme" ] && return 0
+
+  gsettings set org.gnome.desktop.interface color-scheme "$scheme" || {
+    fail_module "desktop: failed to set GNOME color-scheme"
+    return $?
+  }
+  log_info "desktop: applied GNOME color-scheme '$scheme'"
+}
+
+apply_macos() {
+  theme="$1"
+  appearance="$2"
+
+  if [ "$(theme_value desktop_macos "$theme" 2>/dev/null || true)" != "appearance" ]; then
+    log_info "desktop: macOS appearance not enabled for '$theme'; nothing to do"
+    return 0
+  fi
+
+  case "$appearance" in
+    light) dark_mode="false" ;;
+    dark) dark_mode="true" ;;
+  esac
+
+  current="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode' 2>/dev/null)"
+  [ "$current" = "$dark_mode" ] && return 0
+
+  osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark_mode" >/dev/null 2>&1 || {
+    fail_module "desktop: failed to set macOS appearance"
+    return $?
+  }
+  log_info "desktop: applied macOS dark mode $dark_mode"
+}
+
+apply_desktop() {
+  theme="$1"
+  appearance="$(theme_value desktop "$theme" 2>/dev/null || true)"
+
+  case "$appearance" in
+    "")
+      log_info "desktop: not configured for theme '$theme'; nothing to do"
+      return 0
+      ;;
+    light|dark) ;;
+    *)
+      fail_module "desktop: desktop must be light or dark, got '$appearance'"
+      return $?
+      ;;
+  esac
+
+  case "$(detect_desktop)" in
+    kde) apply_kde "$theme" "$appearance" ;;
+    gnome) apply_gnome "$appearance" ;;
+    macos) apply_macos "$theme" "$appearance" ;;
+    *)
+      log_info "desktop: unsupported desktop '${XDG_CURRENT_DESKTOP:-}'; nothing to do"
+      return 0
+      ;;
+  esac
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: desktop apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_desktop "$2"
+}
+
+main "$@"
