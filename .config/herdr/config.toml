@@ -1,9 +1,8 @@
 onboarding = false
 
-# Herdr uses its own fixed theme and is intentionally independent from
-# theme-switch.
+# The [theme] section is managed by chameleon from themes/<profile>.toml.
 [theme]
-name = "gruvbox"
+name = "solarized-light"
 
 [terminal]
 new_cwd = "follow"

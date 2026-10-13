@@ -1,0 +1,176 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+# Follow symlinks so a stowed or linked config.toml is updated in place
+# instead of being replaced by a regular file.
+resolve_path() {
+  resolved="$1"
+
+  while [ -L "$resolved" ]; do
+    link_target="$(readlink "$resolved")" || return 1
+    case "$link_target" in
+      /*) resolved="$link_target" ;;
+      *) resolved="${resolved%/*}/$link_target" ;;
+    esac
+  done
+
+  printf '%s\n' "$resolved"
+}
+
+# Herdr has no config includes, so replace the [theme] and [theme.*] tables
+# with the profile and keep every other setting untouched.
+render_herdr_config() {
+  profile_file="$1"
+  config_file="$2"
+
+  awk -v profile_file="$profile_file" '
+    function print_profile(    line, has_header) {
+      has_header = 0
+      while ((getline line < profile_file) > 0) {
+        if (line ~ /^[[:space:]]*\[theme\][[:space:]]*(#.*)?$/) {
+          has_header = 1
+        }
+        profile_lines[++profile_count] = line
+      }
+      close(profile_file)
+
+      while (profile_count > 0 && profile_lines[profile_count] ~ /^[[:space:]]*$/) {
+        profile_count--
+      }
+
+      if (!has_header) {
+        print "[theme]"
+      }
+      for (i = 1; i <= profile_count; i++) {
+        print profile_lines[i]
+      }
+      inserted = 1
+    }
+
+    /^[[:space:]]*\[/ {
+      header = $0
+      sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+      sub(/[[:space:]]*\].*$/, "", header)
+      was_in_theme = in_theme
+      in_theme = (header == "theme" || index(header, "theme.") == 1)
+
+      if (was_in_theme && !in_theme) {
+        print ""
+      }
+
+      if (in_theme && !inserted) {
+        print_profile()
+      }
+    }
+
+    !in_theme { print }
+
+    END {
+      if (!inserted) {
+        print ""
+        print_profile()
+      }
+    }
+  ' "$config_file"
+}
+
+reload_running_herdr() {
+  herdr_command="$1"
+
+  if "$herdr_command" server reload-config >/dev/null 2>&1; then
+    log_info "herdr: reloaded running server"
+  else
+    log_info "herdr: no running server to reload"
+  fi
+}
+
+apply_herdr() {
+  theme="$1"
+  herdr_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/herdr"
+  herdr_command="$(command -v herdr 2>/dev/null || true)"
+
+  if [ -z "$herdr_command" ] && [ ! -d "$herdr_config_dir" ]; then
+    log_info "herdr: not installed; nothing to do"
+    return 0
+  fi
+
+  profile="$(theme_value herdr "$theme")" || {
+    skip_module "herdr: no profile mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if [ -z "$profile" ]; then
+    skip_module "herdr: no profile mapped for theme '$theme'; skipped"
+    return $?
+  fi
+  if ! is_safe_name "$profile"; then
+    fail_module "herdr: invalid profile mapping for theme '$theme'"
+    return $?
+  fi
+
+  profile_file="$herdr_config_dir/themes/$profile.toml"
+  config_file="${HERDR_CONFIG_PATH:-$herdr_config_dir/config.toml}"
+
+  if [ ! -f "$profile_file" ]; then
+    skip_module "herdr: profile '$profile' is not installed; skipped"
+    return $?
+  fi
+
+  if [ -e "$config_file" ] || [ -L "$config_file" ]; then
+    config_file="$(resolve_path "$config_file")" || {
+      fail_module "herdr: could not resolve config: $config_file"
+      return $?
+    }
+  fi
+  if [ ! -d "${config_file%/*}" ]; then
+    fail_module "herdr: config directory not found: ${config_file%/*}"
+    return $?
+  fi
+  if [ ! -f "$config_file" ]; then
+    : > "$config_file" || {
+      fail_module "herdr: could not create config: $config_file"
+      return $?
+    }
+  fi
+
+  temporary_file="$(mktemp "${config_file%/*}/.${config_file##*/}.XXXXXX")" || {
+    fail_module "herdr: could not create a temporary config"
+    return $?
+  }
+
+  if ! render_herdr_config "$profile_file" "$config_file" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    fail_module "herdr: failed to update theme in config"
+    return $?
+  fi
+
+  if ! mv -f "$temporary_file" "$config_file"; then
+    rm -f "$temporary_file"
+    fail_module "herdr: failed to replace config"
+    return $?
+  fi
+
+  if [ -n "$herdr_command" ]; then
+    reload_running_herdr "$herdr_command"
+  fi
+
+  log_info "herdr: applied '$profile'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: herdr apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_herdr "$2"
+}
+
+main "$@"
