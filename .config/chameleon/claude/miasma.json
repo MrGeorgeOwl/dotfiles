@@ -1,0 +1,28 @@
+{
+  "name": "Miasma (chameleon)",
+  "base": "dark",
+  "overrides": {
+    "claude": "#bb7744",
+    "claudeShimmer": "#d7a06a",
+    "text": "#c2c2b0",
+    "inactive": "#666666",
+    "subtle": "#43492a",
+    "suggestion": "#d7c483",
+    "permission": "#c9a554",
+    "remember": "#78824b",
+    "success": "#5f875f",
+    "error": "#b36d43",
+    "warning": "#c9a554",
+    "promptBorder": "#78824b",
+    "planMode": "#c9a554",
+    "autoAccept": "#5f875f",
+    "bashBorder": "#bb7744",
+    "diffAdded": "#2f3a2a",
+    "diffRemoved": "#3d2a20",
+    "diffAddedWord": "#46573a",
+    "diffRemovedWord": "#5c3b2a",
+    "userMessageBackground": "#2c2c2c",
+    "bashMessageBackgroundColor": "#2c2a24",
+    "selectionBg": "#43492a"
+  }
+}

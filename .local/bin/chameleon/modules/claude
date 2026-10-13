@@ -1,0 +1,128 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+# Built-in presets accepted by Claude Code's `theme` setting.
+is_claude_preset() {
+  case "$1" in
+    auto|dark|light|dark-daltonized|light-daltonized|dark-ansi|light-ansi) return 0 ;;
+  esac
+
+  return 1
+}
+
+# Set the top-level `theme` key and keep every other key. Writes nothing when
+# the value is already current.
+set_claude_theme() {
+  settings_file="$1"
+  theme_value="$2"
+
+  python3 - "$settings_file" "$theme_value" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, value = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        settings = json.load(handle)
+except FileNotFoundError:
+    settings = {}
+
+if not isinstance(settings, dict):
+    sys.exit("settings.json is not a JSON object")
+if settings.get("theme") == value:
+    sys.exit(0)
+
+settings["theme"] = value
+directory = os.path.dirname(path)
+descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".settings.json.")
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(settings, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    if os.path.exists(path):
+        os.chmod(temporary, os.stat(path).st_mode & 0o777)
+    os.replace(temporary, path)
+except BaseException:
+    os.unlink(temporary)
+    raise
+PY
+}
+
+apply_claude() {
+  theme="$1"
+  claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+  if ! command -v claude >/dev/null 2>&1 && [ ! -d "$claude_dir" ]; then
+    log_info "claude: not installed; nothing to do"
+    return 0
+  fi
+
+  mode="$(theme_value claude "$theme")" || {
+    skip_module "claude: no mode mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    fail_module "claude: python3 is required to edit settings.json"
+    return $?
+  fi
+
+  case "$mode" in
+    custom)
+      source_file="$CHAMELEON_CONFIG_DIR/claude/$theme.json"
+      slug="chameleon-$theme"
+      if [ ! -f "$source_file" ]; then
+        skip_module "claude: custom theme '$source_file' is not installed; skipped"
+        return $?
+      fi
+      mkdir -p "$claude_dir/themes" || {
+        fail_module "claude: could not create $claude_dir/themes"
+        return $?
+      }
+      if ! atomic_copy "$source_file" "$claude_dir/themes/$slug.json"; then
+        fail_module "claude: failed to install custom theme '$slug'"
+        return $?
+      fi
+      claude_theme="custom:$slug"
+      ;;
+    *)
+      if ! is_claude_preset "$mode"; then
+        fail_module "claude: unknown mode '$mode' for theme '$theme'"
+        return $?
+      fi
+      claude_theme="$mode"
+      ;;
+  esac
+
+  settings_file="$(resolve_path "$claude_dir/settings.json")" || {
+    fail_module "claude: could not resolve settings.json"
+    return $?
+  }
+
+  if ! set_claude_theme "$settings_file" "$claude_theme"; then
+    fail_module "claude: failed to update $settings_file"
+    return $?
+  fi
+
+  log_info "claude: applied '$claude_theme'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: claude apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_claude "$2"
+}
+
+main "$@"

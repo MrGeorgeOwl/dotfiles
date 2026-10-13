@@ -1,0 +1,139 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+# Grok has built-in themes only; `light` and `dark` are its own aliases for
+# GrokDay and GrokNight.
+grok_theme_name() {
+  case "$1" in
+    light) printf 'grokday\n' ;;
+    dark) printf 'groknight\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Set `theme` inside [ui], adding the key or the table when missing.
+render_grok_config() {
+  config_file="$1"
+  grok_theme="$2"
+
+  awk -v theme="$grok_theme" '
+    function emit() {
+      printf "theme = \"%s\"\n", theme
+      written = 1
+    }
+
+    /^[[:space:]]*\[/ {
+      if (in_ui && !written) {
+        emit()
+      }
+      header = $0
+      sub(/^[[:space:]]*\[+[[:space:]]*/, "", header)
+      sub(/[[:space:]]*\].*$/, "", header)
+      in_ui = (header == "ui")
+      if (in_ui) {
+        seen_ui = 1
+      }
+      print
+      next
+    }
+
+    in_ui && /^[[:space:]]*theme[[:space:]]*=/ {
+      if (!written) {
+        emit()
+      }
+      next
+    }
+
+    { print }
+
+    END {
+      if (in_ui && !written) {
+        emit()
+      } else if (!seen_ui) {
+        print ""
+        print "[ui]"
+        emit()
+      }
+    }
+  ' "$config_file"
+}
+
+apply_grok() {
+  theme="$1"
+  grok_dir="${GROK_HOME:-$HOME/.grok}"
+
+  if ! command -v grok >/dev/null 2>&1 && [ ! -d "$grok_dir" ]; then
+    log_info "grok: not installed; nothing to do"
+    return 0
+  fi
+
+  mode="$(theme_value grok "$theme")" || {
+    skip_module "grok: no theme mapped for theme '$theme'; skipped"
+    return $?
+  }
+
+  case "$mode" in
+    custom)
+      skip_module "grok: custom colours are not supported; use a built-in theme"
+      return $?
+      ;;
+  esac
+  if [ -z "$mode" ] || ! is_safe_name "$mode"; then
+    fail_module "grok: invalid theme mapping for theme '$theme'"
+    return $?
+  fi
+
+  grok_theme="$(grok_theme_name "$mode")"
+  config_file="$(resolve_path "$grok_dir/config.toml")" || {
+    fail_module "grok: could not resolve config.toml"
+    return $?
+  }
+  if [ ! -d "${config_file%/*}" ]; then
+    fail_module "grok: config directory not found: ${config_file%/*}"
+    return $?
+  fi
+  [ -f "$config_file" ] || : > "$config_file"
+
+  temporary_file="$(mktemp "${config_file%/*}/.config.toml.XXXXXX")" || {
+    fail_module "grok: could not create a temporary config"
+    return $?
+  }
+
+  if ! render_grok_config "$config_file" "$grok_theme" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    fail_module "grok: failed to update theme in config"
+    return $?
+  fi
+
+  if cmp -s "$temporary_file" "$config_file"; then
+    rm -f "$temporary_file"
+  else
+    config_mode="$(stat -c %a "$config_file" 2>/dev/null || stat -f %Lp "$config_file")"
+    chmod "$config_mode" "$temporary_file" 2>/dev/null || true
+    if ! mv -f "$temporary_file" "$config_file"; then
+      rm -f "$temporary_file"
+      fail_module "grok: failed to replace config"
+      return $?
+    fi
+  fi
+
+  log_info "grok: applied '$grok_theme'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: grok apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_grok "$2"
+}
+
+main "$@"

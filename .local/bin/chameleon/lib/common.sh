@@ -148,3 +148,19 @@ atomic_copy() {
     return 1
   fi
 }
+
+# Follow symlinks so a stowed or linked config file is updated in place
+# instead of being replaced by a regular file.
+resolve_path() {
+  resolved="$1"
+
+  while [ -L "$resolved" ]; do
+    link_target="$(readlink "$resolved")" || return 1
+    case "$link_target" in
+      /*) resolved="$link_target" ;;
+      *) resolved="${resolved%/*}/$link_target" ;;
+    esac
+  done
+
+  printf '%s\n' "$resolved"
+}
