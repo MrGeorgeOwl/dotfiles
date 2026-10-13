@@ -1,0 +1,20 @@
+[theme]
+name = "terminal"
+
+[theme.custom]
+accent = "#4a514d"
+panel_bg = "#eaeaea"
+surface0 = "#d6d6d6"
+surface1 = "#c4c4c4"
+surface_dim = "#e0e0e0"
+overlay0 = "#85938c"
+overlay1 = "#58615d"
+text = "#262827"
+subtext0 = "#3f4241"
+mauve = "#555e59"
+green = "#58615d"
+yellow = "#67726c"
+red = "#4a514d"
+blue = "#59635e"
+teal = "#505854"
+peach = "#67726c"
