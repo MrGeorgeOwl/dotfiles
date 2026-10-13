@@ -1,0 +1,28 @@
+{
+  "name": "Solarized Light (chameleon)",
+  "base": "light",
+  "overrides": {
+    "claude": "#cb4b16",
+    "claudeShimmer": "#e0753f",
+    "text": "#586e75",
+    "inactive": "#93a1a1",
+    "subtle": "#d6cfb8",
+    "suggestion": "#268bd2",
+    "permission": "#268bd2",
+    "remember": "#6c71c4",
+    "success": "#859900",
+    "error": "#dc322f",
+    "warning": "#b58900",
+    "promptBorder": "#93a1a1",
+    "planMode": "#2aa198",
+    "autoAccept": "#859900",
+    "bashBorder": "#d33682",
+    "diffAdded": "#e8ecc8",
+    "diffRemoved": "#f6dcd3",
+    "diffAddedWord": "#d3dc9a",
+    "diffRemovedWord": "#efb9a8",
+    "userMessageBackground": "#eee8d5",
+    "bashMessageBackgroundColor": "#f3eddb",
+    "selectionBg": "#eee8d5"
+  }
+}

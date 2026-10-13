@@ -23,3 +23,19 @@ and `[theme.*]` tables in `~/.config/herdr/config.toml` with
 `~/.config/herdr/themes/<profile>.toml`, keeps every other setting, and runs
 `herdr server reload-config` so running clients switch without a restart. It is
 a no-op when Herdr is not installed.
+
+Coding agents are configured per theme with `claude=` and `grok=`:
+
+- `claude=custom` installs `~/.config/chameleon/claude/<theme>.json` as the
+  Claude Code theme `custom:chameleon`; `claude=light`, `dark` or another
+  built-in preset uses that preset instead. Claude Code watches
+  `~/.claude/themes`, so running sessions repaint live. A session started
+  before the first run, while `theme` was not yet `custom:chameleon`, needs one
+  restart.
+- `grok=light` or `grok=dark` sets `[ui] theme` in `~/.grok/config.toml` to
+  GrokDay or GrokNight; any other built-in name is passed through. Grok has no
+  custom colours and reads the theme at startup, so new sessions pick it up.
+
+Both modules keep every other setting, write nothing when the value is already
+set, and are a no-op when the agent is not installed. pi follows the terminal
+colours on its own and needs no module.

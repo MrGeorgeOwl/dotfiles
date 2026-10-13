@@ -8,22 +8,6 @@ if [ -z "${CHAMELEON_ROOT:-}" ]; then
 fi
 . "$CHAMELEON_ROOT/lib/common.sh"
 
-# Follow symlinks so a stowed or linked config.toml is updated in place
-# instead of being replaced by a regular file.
-resolve_path() {
-  resolved="$1"
-
-  while [ -L "$resolved" ]; do
-    link_target="$(readlink "$resolved")" || return 1
-    case "$link_target" in
-      /*) resolved="$link_target" ;;
-      *) resolved="${resolved%/*}/$link_target" ;;
-    esac
-  done
-
-  printf '%s\n' "$resolved"
-}
-
 # Herdr has no config includes, so replace the [theme] and [theme.*] tables
 # with the profile and keep every other setting untouched.
 render_herdr_config() {
