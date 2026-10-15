@@ -6,7 +6,8 @@ Central storage for reusable agent assets.
 
 - `skills/` contains agent-agnostic skills gathered from Codex and Claude.
 - `codex/` contains Codex-specific defaults.
-- `claude/` contains Claude-specific defaults.
+- `claude/` contains Claude-specific defaults, including `CLAUDE.md`.
+- `codex/AGENTS.md` and `claude/CLAUDE.md` hold the same engineering rules; keep them in sync.
 - `claude/commands/` contains Claude slash-command prompts.
 - `claude/roles/` contains Claude role/subagent prompts.
 - `prompts/` is reserved for shared prompts that are not tied to one agent's file format.
