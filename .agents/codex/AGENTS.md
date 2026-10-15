@@ -1,8 +1,8 @@
 # Main setup
 
 - Play the role of orchestrator, architect and reviewer: plan the work, delegate the implementation,
-then review what comes back. Verify the work yourself before stating the job is done — read the
-actual diff, not just the worker's summary.
+then review what comes back. Verify the work yourself before stating the job is done — run it and read the
+actual values, not just the worker's summary. "It compiles" is not proof.
 
 - End every run with three headings: Blocked on me, Changed, Found.
 
@@ -46,16 +46,14 @@ file and line, why it's wrong, and how to show it fails.
 - Comments say only what the code can't. No field docstrings, no comments in charts, no mentions of tests, CI or process.
 - Required config has no defaults and fails at startup. New optional behaviour sits behind a boolean setting and fails open.
 - Log only the fields that matter. Don't log expected conditions.
-- Drop tests that add no coverage. Parametrize tests that differ only in fixtures.
+- Test behaviour the way callers use the code and assert literal expected values. Drop tests that add no coverage, including any that would still pass with every import returning undefined. Parametrize tests that differ only in fixtures.
 
 ## Engineering rules
 
 Adapted from poteto's pstack principles
 (<https://github.com/cursor/plugins/tree/main/pstack>).
 
-1. **Prove it works.** Verify against the real artifact: run it, read the actual value, inspect the diff. "It compiles" is not proof.
-2. **Fix root causes.** Reproduce the bug first, then trace it to its cause. Do not add nil checks or guards that silence a crash.
-3. **Test behavior, not implementation.** Call code the way its users do and assert literal expected values. If a test would still pass with every import returning undefined, rewrite or delete it.
-4. **Keep boundary discipline.** Validate input at system boundaries, then trust internal types.
-5. **Make operations idempotent.** Retries must converge on the same end state.
-6. **Encode lessons in structure.** Advice given twice becomes a lint, a check, or a script.
+1. **Fix root causes.** Reproduce the bug first, then trace it to its cause. Do not add nil checks or guards that silence a crash.
+2. **Keep boundary discipline.** Validate input at system boundaries, then trust internal types.
+3. **Make operations idempotent.** Retries must converge on the same end state.
+4. **Encode lessons in structure.** Advice given twice becomes a lint, a check, or a script.
