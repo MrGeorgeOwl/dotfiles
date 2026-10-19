@@ -8,7 +8,7 @@ Usage: agent-sync [--dry-run]
 
 Synchronize agent setup from this dotfiles repository:
   - .agents/skills -> ~/.agents/skills, ~/.codex/skills, ~/.claude/skills,
-    ~/.grok/skills, and ~/.pi/agent/skills
+    and ~/.grok/skills (Pi reads shared skills from ~/.agents/skills)
   - .agents/prompts -> ~/.codex/prompts and ~/.claude/prompts, if prompt files exist
   - .agents/codex -> ~/.codex
   - .agents/claude/commands -> ~/.claude/commands
@@ -124,7 +124,7 @@ copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
 copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
 copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
 copy_dir_contents "$agents_dir/skills" "$grok_home/skills"
-copy_dir_contents "$agents_dir/skills" "$pi_home/agent/skills"
+# Pi also discovers ~/.agents/skills; a second copy causes name collisions.
 
 if has_real_files "$agents_dir/prompts"; then
   copy_dir_contents "$agents_dir/prompts" "$codex_home/prompts"
