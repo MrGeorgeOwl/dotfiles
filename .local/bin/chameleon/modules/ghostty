@@ -30,15 +30,14 @@ reload_ghostty_macos() {
 tell application "System Events"
   if exists application process "Ghostty" then
     tell application process "Ghostty"
-      set frontmost to true
-      keystroke "," using {command down, shift down}
+      click menu item "Reload Configuration" of menu 1 of menu bar item "Ghostty" of menu bar 1
     end tell
   end if
 end tell
 '
 
-  # Keep stderr visible, especially for Automation/Accessibility permission
-  # failures when Chameleon runs as a LaunchAgent.
+  # Invoke the menu directly instead of focusing Ghostty to send a shortcut.
+  # Keep stderr visible for Automation/Accessibility permission failures.
   osascript -e "$reload_script" >/dev/null
 }
 

@@ -44,9 +44,10 @@ at a time; uninstall the service before trying a foreground watcher.
 - Logs: `~/Library/Logs/chameleon/watch.log`
 - Compiled listener: `~/Library/Caches/chameleon/appearance-watcher`
 
-Ghostty's existing macOS reload uses an automated keyboard shortcut. A background
-watcher does not inherit the terminal's Accessibility permission. If the log says
-`osascript is not allowed to send keystrokes`, grant the watcher permission under
+Ghostty's macOS reload invokes its Reload Configuration menu item directly,
+without activating the terminal or sending keystrokes. This still uses UI
+scripting, and a background watcher does not inherit the terminal's Accessibility
+permission. If the log reports a permission failure, grant the watcher access under
 System Settings > Privacy & Security > Accessibility (called Device Control and
 Data Access on newer macOS versions). Add the executable at the compiled-listener
 path above, then restart it with

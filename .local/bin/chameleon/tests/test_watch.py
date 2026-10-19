@@ -60,6 +60,27 @@ class WatchCLI(unittest.TestCase):
         self.assertEqual(self.run_cli('missing', 'dark').returncode, 2)
         self.assertEqual(self.run_cli('../light', 'dark').returncode, 2)
 
+    def test_ghostty_reload_does_not_activate_terminal(self):
+        self.script('pgrep', 'exit 0')
+        self.script('osascript', 'printf "%s" "$2" > "$TEST_APPLESCRIPT"')
+        theme = self.home / '.config/chameleon/themes/light.conf'
+        theme.write_text('ghostty=light\n')
+        themes = self.home / '.config/ghostty/themes'
+        themes.mkdir(parents=True)
+        (themes / 'light').write_text('background = #ffffff\n')
+        script = self.home / 'reload.applescript'
+        result = subprocess.run([str(ROOT / 'modules/ghostty'), 'apply', 'light'],
+                                env=dict(self.env, CHAMELEON_ROOT=str(ROOT),
+                                         XDG_CONFIG_HOME=str(self.home / '.config'),
+                                         TEST_APPLESCRIPT=str(script)),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((themes / 'current').read_text(), (themes / 'light').read_text())
+        reload = script.read_text()
+        self.assertIn('click menu item "Reload Configuration"', reload)
+        self.assertNotIn('frontmost', reload)
+        self.assertNotIn('keystroke', reload)
+
     def test_follow_mode_skips_only_desktop(self):
         root = self.home / 'chameleon'
         (root / 'lib').mkdir(parents=True)
