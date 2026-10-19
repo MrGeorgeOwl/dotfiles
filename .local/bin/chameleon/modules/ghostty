@@ -37,7 +37,9 @@ tell application "System Events"
 end tell
 '
 
-  osascript -e "$reload_script" >/dev/null 2>&1
+  # Keep stderr visible, especially for Automation/Accessibility permission
+  # failures when Chameleon runs as a LaunchAgent.
+  osascript -e "$reload_script" >/dev/null
 }
 
 apply_ghostty() {

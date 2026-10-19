@@ -19,6 +19,8 @@ MODULES="ghostty btop nvim herdr claude grok desktop wallpaper"
 usage() {
   cat <<'EOF'
 Usage: chameleon [options] <theme>
+       chameleon watch [--install] <light-theme> <dark-theme>
+       chameleon watch --uninstall
 
 Apply a theme across configured components.
 
@@ -68,6 +70,10 @@ add_component() {
 should_run_module() {
   module="$1"
 
+  # In watch mode macOS owns appearance, not the selected theme.
+  if [ "${CHAMELEON_FOLLOW_APPEARANCE:-0}" = 1 ] && [ "$module" = desktop ]; then
+    return 1
+  fi
   [ "$COMPONENT_FILTERED" -eq 0 ] && return 0
   is_selected_module "$module"
 }
@@ -276,6 +282,7 @@ main() {
     -h|--help) show_help "$@" ;;
     --list) list_themes "$@" ;;
     --list-components) list_components "$@" ;;
+    watch) shift; exec "$CHAMELEON_ROOT/lib/watch.sh" "$@" ;;
     *) apply "$@" ;;
   esac
 }

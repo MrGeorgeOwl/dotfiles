@@ -13,6 +13,62 @@ chameleon -v -c wallpaper miasma       # Change the wallpaper and show detailed 
 Successful runs are silent by default. Use `-v` or `--verbose` to show the
 component summary and module-level logs.
 
+## Follow system appearance
+
+On macOS, `watch` follows actual Light/Dark appearance changes, including manual
+switches and System Settings > Appearance > Auto. No cron schedule is needed.
+Night Shift (display warmth) is unrelated and does not trigger it.
+
+```sh
+chameleon watch dayfox miasma           # Foreground; Ctrl-C to stop.
+chameleon watch --install dayfox miasma # Start now and automatically at login.
+chameleon watch --uninstall            # Stop and remove the login LaunchAgent.
+```
+
+The first theme is for Light, the second for Dark. The watcher applies once on
+startup, ignores duplicate notifications, and serializes applications. If the
+appearance changes during an application, the latest state is applied next.
+Watch-triggered runs skip `desktop`, leaving macOS in control of appearance;
+normal `chameleon <theme>` runs retain their existing desktop behavior. Failed
+applications are logged and retried on the next transition or watcher restart,
+not continuously.
+
+The macOS implementation requires Xcode Command Line Tools (`xcode-select
+--install`) to compile its small Swift listener on first use or after source
+changes. Installing the LaunchAgent additionally requires `python3`. It captures
+the installing shell's `PATH` so module tools can be found at login. Re-run
+`--install` to change the theme pair or captured `PATH`. Only one watcher can run
+at a time; uninstall the service before trying a foreground watcher.
+
+- LaunchAgent: `~/Library/LaunchAgents/local.chameleon.appearance.plist`
+- Logs: `~/Library/Logs/chameleon/watch.log`
+- Compiled listener: `~/Library/Caches/chameleon/appearance-watcher`
+
+Ghostty's existing macOS reload uses an automated keyboard shortcut. A background
+watcher does not inherit the terminal's Accessibility permission. If the log says
+`osascript is not allowed to send keystrokes`, grant the watcher permission under
+System Settings > Privacy & Security > Accessibility (called Device Control and
+Data Access on newer macOS versions). Add the executable at the compiled-listener
+path above, then restart it with
+`launchctl kickstart -k gui/$(id -u)/local.chameleon.appearance`. Recompiling the
+listener can invalidate its permission even while the switch remains enabled;
+remove and re-add the executable if this happens. Until allowed, Ghostty's theme
+file updates but its running windows may keep the old colors.
+
+The listener runs a windowless AppKit application and observes its
+`effectiveAppearance`, which follows the system appearance. The legacy
+`AppleInterfaceThemeChangedNotification` is also accepted as a refresh hint, but
+Settings changes do not depend on it. No polling runs in the background. `watch`
+dispatches by platform; Linux and other unsupported platforms currently return a
+non-zero exit status with a clear
+error instead of starting a watcher.
+
+Tests (use temporary configs and never switch your actual appearance):
+
+```sh
+python3 -m unittest discover -s .local/bin/chameleon/tests -v
+```
+
 Theme mappings live in `~/.config/chameleon/themes/<theme>.conf` as plain
 `component=value` entries. Missing mappings or profiles skip that component.
 `~/.config/chameleon/current` updates only when an unfiltered run applies
