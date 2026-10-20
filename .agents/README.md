@@ -41,6 +41,24 @@ Run `/reload` in Pi after cleanup.
 Use `.agents/agent-sync --dry-run` to preview destinations.
 Run `python3 -m unittest discover -s .agents/tests -v` for isolated sync tests.
 
+## Merge the latest base into the current branch
+
+The shared `skills/merge-base/SKILL.md` workflow discovers the PR base (falling
+back to repository guidance or the remote default), fetches it, and merges it
+into the current branch. It never rebases or pushes, and asks before handling
+uncommitted work or ambiguous conflicts.
+
+After running `.agents/agent-sync`:
+
+| Agent | Command | Explicit base example |
+| --- | --- | --- |
+| Claude Code | `/merge-base` | `/merge-base develop` |
+| Grok | `/merge-base` | `/merge-base upstream/main` |
+| Pi | `/skill:merge-base` | `/skill:merge-base develop` |
+
+Run `/reload` in Pi; restart Claude Code if the command is not yet visible.
+Grok reloads skills when their files change.
+
 ## Imported Sources
 
 - Codex: `~/.agents/skills`, `~/.codex/skills`, `~/.codex/config.toml`, `~/.codex/AGENTS.md`
