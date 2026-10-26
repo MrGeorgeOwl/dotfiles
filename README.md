@@ -13,6 +13,24 @@ chameleon -v -c wallpaper miasma       # Change the wallpaper and show detailed 
 Successful runs are silent by default. Use `-v` or `--verbose` to show the
 component summary and module-level logs.
 
+## Wallpaper in remote sessions
+
+The `wallpaper` component skips SSH sessions when `SSH_CONNECTION`, `SSH_CLIENT`,
+or `SSH_TTY` is non-empty, even with X11 forwarding. On Linux it also skips when
+both `DISPLAY` and `WAYLAND_DISPLAY` are unset or empty. This covers headless
+Herdr sessions even if SSH variables are not preserved. A running display manager
+or reachable user D-Bus is not enough to identify the calling shell as graphical.
+Local macOS sessions do not require these Linux display variables.
+
+Local KDE wallpaper calls require `qdbus6` and GNU `timeout` (coreutils). They
+have a 5-second timeout, followed by forced termination after one more second if
+needed. Errors are reported instead of silently waiting for an unresponsive
+Plasma scripting API. Other components are unaffected.
+
+Use `-v` to see why wallpaper was skipped. As with other skipped components,
+normal runs continue, `--fail-fast` stops, and an unfiltered run leaves
+`~/.config/chameleon/current` unchanged.
+
 ## Follow system appearance
 
 On macOS, `watch` follows actual Light/Dark appearance changes, including manual

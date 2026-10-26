@@ -21,8 +21,26 @@ for (const desktop of ds) {
 }
 "
 
-  command -v qdbus6 >/dev/null 2>&1 || return 1
-  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$plasma_script"
+  command -v qdbus6 >/dev/null 2>&1 || {
+    fail_module "wallpaper: qdbus6 not found"
+    return $?
+  }
+  command -v timeout >/dev/null 2>&1 || {
+    fail_module "wallpaper: timeout not found (required for KDE Plasma calls)"
+    return $?
+  }
+
+  # Plasma can own its D-Bus name while its scripting API is unresponsive.
+  # Bound the entire qdbus call, including introspection, and escalate if needed.
+  log_info "wallpaper: applying with KDE Plasma (5-second timeout)"
+  timeout --kill-after=1s 5s qdbus6 org.kde.plasmashell /PlasmaShell \
+    org.kde.PlasmaShell.evaluateScript "$plasma_script" >/dev/null
+  result=$?
+  case "$result" in
+    0) return 0 ;;
+    124|137) fail_module "wallpaper: KDE Plasma did not respond within 5 seconds" ;;
+    *) fail_module "wallpaper: failed to set wallpaper with qdbus6" ;;
+  esac
 }
 
 apply_wallpaper_macos() {
@@ -43,6 +61,19 @@ EOF
 
 apply_wallpaper() {
   theme="$1"
+
+  # SSH forwarding is not a local desktop: the user bus still targets this host.
+  if [ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]; then
+    skip_module "wallpaper: SSH session; skipped"
+    return $?
+  fi
+  # Herdr and other remote/headless shells may not preserve SSH variables.
+  # A reachable user bus alone does not mean this shell has a graphical session.
+  if is_linux && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    skip_module "wallpaper: no graphical session (DISPLAY/WAYLAND_DISPLAY unset); skipped"
+    return $?
+  fi
+
   wallpaper_file="$(theme_value wallpaper "$theme")" || {
     skip_module "wallpaper: no file mapped for theme '$theme'; skipped"
     return $?
@@ -66,10 +97,7 @@ apply_wallpaper() {
   fi
 
   if is_linux; then
-    if ! apply_wallpaper_linux "$wallpaper_path" >/dev/null 2>&1; then
-      fail_module "wallpaper: failed to set wallpaper with qdbus6"
-      return $?
-    fi
+    apply_wallpaper_linux "$wallpaper_path" || return $?
   elif is_macos; then
     if ! apply_wallpaper_macos "$wallpaper_path"; then
       fail_module "wallpaper: failed to set wallpaper with osascript"
