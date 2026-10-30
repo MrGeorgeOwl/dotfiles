@@ -44,9 +44,10 @@ Run `python3 -m unittest discover -s .agents/tests -v` for isolated sync tests.
 ## Merge the latest base into the current branch
 
 The shared `skills/merge-base/SKILL.md` workflow discovers the PR base (falling
-back to repository guidance or the remote default), fetches it, and merges it
-into the current branch. It never rebases or pushes, and asks before handling
-uncommitted work or ambiguous conflicts.
+back to repository guidance or the remote default), fetches it, and resolves
+conflicts autonomously. After verification, it completes the merge and pushes
+the current branch. It never rebases or force-pushes, and asks only for safety
+blockers or unresolved decisions.
 
 After running `.agents/agent-sync`:
 
