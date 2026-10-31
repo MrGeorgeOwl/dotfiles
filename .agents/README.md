@@ -31,8 +31,20 @@ It copies shared prompts into both Codex and Claude configs, then copies
 Codex-only and Claude-only assets into their matching config folders. It also
 copies the repository `.pi/` directory into `~/.pi/` (or `$PI_HOME`).
 
-The sync does not delete destination-only files. After upgrading from the old
-sync, compare existing `~/.pi/agent/skills/<name>` directories with their
+Skills are mirrored. Before copying, the sync removes any top-level skill folder
+(or symlink) in `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
+`~/.grok/skills` that is not in `.agents/skills`. Removed skills are moved, not
+deleted, to `~/.local/share/agent-sync/removed-<timestamp>/<agent>/<skill>`
+(`$XDG_DATA_HOME` is respected), and each one is printed. Symlinks are moved
+as links; their targets are never touched. Hidden entries such as
+`~/.codex/skills/.system`, plain files, and `~/.pi/agent/skills` are left alone.
+To keep a local-only skill, add its name on its own line to
+`~/.config/agent-sync/keep-skills` (`$XDG_CONFIG_HOME` is respected; lines
+starting with `#` are ignored). `--dry-run` prints `would remove stale skill`
+lines without changing anything.
+
+Other destination-only files (commands, agents, prompts, configs) are not
+deleted. After upgrading from the old sync, compare existing `~/.pi/agent/skills/<name>` directories with their
 `~/.agents/skills/<name>` counterparts and move verified duplicate directories
 to a backup outside either skills directory. Preserve unique files or local
 changes. Symlinks to the same skill files do not cause Pi collisions.
