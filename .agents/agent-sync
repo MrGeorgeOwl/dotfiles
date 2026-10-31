@@ -16,8 +16,13 @@ Synchronize agent setup from this dotfiles repository:
   - .agents/claude/CLAUDE.md and settings.json -> ~/.claude
   - .pi -> ~/.pi
 
-The sync copies files into place and overwrites matching files. It does not
-delete destination-only files.
+The sync copies files into place and overwrites matching files. Skill
+directories are mirrored: a top-level skill in a skills destination that is not
+in .agents/skills is moved to
+${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>-<pid>/<agent>/.
+Hidden entries (such as ~/.codex/skills/.system), plain files, and skills
+listed one per line in ${XDG_CONFIG_HOME:-~/.config}/agent-sync/keep-skills
+are left alone. Other destination-only files are not deleted.
 EOF
 }
 
@@ -84,6 +89,33 @@ copy_dir_contents() {
   done
 }
 
+prune_skills() {
+  local src="$1"
+  local dest="$2"
+  local label="$3"
+  local item name target
+
+  [[ -d "$dest" ]] || return 0
+
+  for item in "$dest"/*(N); do
+    name="${item:t}"
+    # Only directories or symlinks are skills; mv moves a symlink, not its target.
+    [[ -L "$item" || -d "$item" ]] || continue
+    [[ -d "$src/$name" ]] && continue
+    (( ${keep_skills[(Ie)$name]} )) && continue
+
+    if (( dry_run )); then
+      log "would remove stale skill $item"
+      continue
+    fi
+
+    target="$removed_dir/$label/$name"
+    mkdir -p "${target:h}"
+    mv "$item" "$target"
+    log "removed stale skill $item -> $target"
+  done
+}
+
 dry_run=0
 
 while (( $# > 0 )); do
@@ -119,6 +151,22 @@ log "agents: $agents_home"
 log "claude: $claude_home"
 log "grok:   $grok_home"
 log "pi:     $pi_home"
+
+keep_file="${XDG_CONFIG_HOME:-$HOME/.config}/agent-sync/keep-skills"
+keep_skills=()
+if [[ -f "$keep_file" ]]; then
+  # One name per line; strip CR/whitespace (CRLF files), drop blanks and # comments.
+  keep_skills=(${${${(f)"$(<"$keep_file")"}//[[:space:]]/}:#\#*})
+fi
+removed_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-sync/removed-$(date +%Y%m%d-%H%M%S)-$$"
+
+repo_skills=("$agents_dir"/skills/*(/N))
+(( $#repo_skills )) || die "no skills in $agents_dir/skills; refusing to prune"
+
+prune_skills "$agents_dir/skills" "$agents_home/skills" agents
+prune_skills "$agents_dir/skills" "$codex_home/skills" codex
+prune_skills "$agents_dir/skills" "$claude_home/skills" claude
+prune_skills "$agents_dir/skills" "$grok_home/skills" grok
 
 copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
 copy_dir_contents "$agents_dir/skills" "$codex_home/skills"

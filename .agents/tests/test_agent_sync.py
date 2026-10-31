@@ -10,6 +10,8 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "agent-sync"
 HOME_VARS = ("AGENTS_HOME", "CODEX_HOME", "CLAUDE_HOME", "GROK_HOME", "PI_HOME")
+XDG_VARS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME")
+SKILL_HOMES = (".agents", ".codex", ".claude", ".grok")
 
 
 class AgentSyncTests(unittest.TestCase):
@@ -29,7 +31,7 @@ class AgentSyncTests(unittest.TestCase):
         config = self.repo / ".pi/web-search.json"
         config.parent.mkdir()
         config.write_text("{}\n")
-        self.env = {k: v for k, v in os.environ.items() if k not in HOME_VARS}
+        self.env = {k: v for k, v in os.environ.items() if k not in HOME_VARS + XDG_VARS}
         self.env["HOME"] = str(self.home)
 
     def run_sync(self, *args):
@@ -74,6 +76,80 @@ class AgentSyncTests(unittest.TestCase):
         self.assertIn(str(self.home / ".agents/skills"), output)
         self.assertNotIn(str(self.home / ".pi/agent/skills"), output)
         self.assertEqual(list(self.home.iterdir()), [])
+
+    def make_skill(self, home, name, text="local\n"):
+        path = self.home / home / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def removed_dirs(self):
+        return sorted((self.home / ".local/share/agent-sync").glob("removed-*"))
+
+    def test_stale_skills_are_moved_to_backup(self):
+        for home in SKILL_HOMES:
+            self.make_skill(home, "stale", f"{home} copy\n")
+        output = self.run_sync()
+        [removed] = self.removed_dirs()
+        for home in SKILL_HOMES:
+            self.assertFalse((self.home / home / "skills/stale").exists())
+            label = home.lstrip(".")
+            self.assertEqual(
+                (removed / label / "stale/SKILL.md").read_text(), f"{home} copy\n"
+            )
+            self.assertIn(
+                f"removed stale skill {self.home / home / 'skills/stale'}", output
+            )
+        self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
+
+    def test_kept_hidden_and_plain_entries_survive(self):
+        keep = self.home / ".config/agent-sync/keep-skills"
+        keep.parent.mkdir(parents=True)
+        keep.write_bytes(b"# local-only skills\r\n\r\n  mine \r\n\n")
+        kept = self.make_skill(".claude", "mine")
+        system = self.make_skill(".codex", ".system")
+        note = self.home / ".grok/skills/notes.txt"
+        note.parent.mkdir(parents=True)
+        note.write_text("note\n")
+        pi_only = self.home / ".pi/agent/skills/pi-only/SKILL.md"
+        pi_only.parent.mkdir(parents=True)
+        pi_only.write_text("pi\n")
+        self.run_sync()
+        for path in (kept, system, note, pi_only):
+            self.assertTrue(path.is_file(), path)
+        self.assertEqual(self.removed_dirs(), [])
+
+    def test_symlinked_stale_skill_moves_link_not_target(self):
+        outside = self.root / "outside/linked"
+        outside.mkdir(parents=True)
+        (outside / "SKILL.md").write_text("outside\n")
+        link = self.home / ".agents/skills/linked"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(outside)
+        self.run_sync()
+        [removed] = self.removed_dirs()
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue((removed / "agents/linked").is_symlink())
+        self.assertEqual((outside / "SKILL.md").read_text(), "outside\n")
+
+    def test_dry_run_reports_prune_without_changes(self):
+        stale = self.make_skill(".claude", "stale")
+        output = self.run_sync("--dry-run")
+        self.assertIn(
+            f"would remove stale skill {self.home / '.claude/skills/stale'}", output
+        )
+        self.assertEqual(stale.read_text(), "local\n")
+        self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".claude"])
+        self.assertEqual(os.listdir(self.home / ".claude/skills"), ["stale"])
+
+    def test_second_run_is_noop(self):
+        self.make_skill(".grok", "stale")
+        self.run_sync()
+        first = self.removed_dirs()
+        output = self.run_sync()
+        self.assertEqual(self.removed_dirs(), first)
+        self.assertNotIn("stale skill", output)
+        self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
 
 if __name__ == "__main__":
