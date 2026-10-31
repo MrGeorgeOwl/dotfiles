@@ -19,7 +19,7 @@ Synchronize agent setup from this dotfiles repository:
 The sync copies files into place and overwrites matching files. Skill
 directories are mirrored: a top-level skill in a skills destination that is not
 in .agents/skills is moved to
-${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>/<agent>/.
+${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>-<pid>/<agent>/.
 Hidden entries (such as ~/.codex/skills/.system), plain files, and skills
 listed one per line in ${XDG_CONFIG_HOME:-~/.config}/agent-sync/keep-skills
 are left alone. Other destination-only files are not deleted.
@@ -155,9 +155,10 @@ log "pi:     $pi_home"
 keep_file="${XDG_CONFIG_HOME:-$HOME/.config}/agent-sync/keep-skills"
 keep_skills=()
 if [[ -f "$keep_file" ]]; then
-  keep_skills=(${${(f)"$(<"$keep_file")"}:#\#*})
+  # One name per line; strip CR/whitespace (CRLF files), drop blanks and # comments.
+  keep_skills=(${${${(f)"$(<"$keep_file")"}//[[:space:]]/}:#\#*})
 fi
-removed_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-sync/removed-$(date +%Y%m%d-%H%M%S)"
+removed_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-sync/removed-$(date +%Y%m%d-%H%M%S)-$$"
 
 repo_skills=("$agents_dir"/skills/*(/N))
 (( $#repo_skills )) || die "no skills in $agents_dir/skills; refusing to prune"

@@ -34,7 +34,7 @@ copies the repository `.pi/` directory into `~/.pi/` (or `$PI_HOME`).
 Skills are mirrored. Before copying, the sync removes any top-level skill folder
 (or symlink) in `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
 `~/.grok/skills` that is not in `.agents/skills`. Removed skills are moved, not
-deleted, to `~/.local/share/agent-sync/removed-<timestamp>/<agent>/<skill>`
+deleted, to `~/.local/share/agent-sync/removed-<timestamp>-<pid>/<agent>/<skill>`
 (`$XDG_DATA_HOME` is respected), and each one is printed. Symlinks are moved
 as links; their targets are never touched. Hidden entries such as
 `~/.codex/skills/.system`, plain files, and `~/.pi/agent/skills` are left alone.

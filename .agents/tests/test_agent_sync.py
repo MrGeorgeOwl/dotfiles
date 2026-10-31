@@ -105,7 +105,7 @@ class AgentSyncTests(unittest.TestCase):
     def test_kept_hidden_and_plain_entries_survive(self):
         keep = self.home / ".config/agent-sync/keep-skills"
         keep.parent.mkdir(parents=True)
-        keep.write_text("# local-only skills\nmine\n")
+        keep.write_bytes(b"# local-only skills\r\n\r\n  mine \r\n\n")
         kept = self.make_skill(".claude", "mine")
         system = self.make_skill(".codex", ".system")
         note = self.home / ".grok/skills/notes.txt"
