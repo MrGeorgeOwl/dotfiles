@@ -22,7 +22,8 @@ in .agents/skills is moved to
 ${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>-<pid>/<agent>/.
 Hidden entries (such as ~/.codex/skills/.system), plain files, and skills
 listed one per line in ${XDG_CONFIG_HOME:-~/.config}/agent-sync/keep-skills
-are left alone. Other destination-only files are not deleted.
+are left alone. Each skill's evals/ folder is not copied. Other
+destination-only files are not deleted.
 EOF
 }
 
@@ -86,6 +87,29 @@ copy_dir_contents() {
 
   for item in "$src"/*(N) "$src"/.[!.]*(N); do
     cp -R "$item" "$dest"/
+  done
+}
+
+copy_skills() {
+  local src="$1"
+  local dest="$2"
+  local skill item
+
+  [[ -d "$src" ]] || return 0
+
+  if (( dry_run )); then
+    log "would sync $src/ -> $dest/ (without evals/)"
+    return 0
+  fi
+
+  # Like copy_dir_contents, but a skill's evals/ folder stays in the repo:
+  # evals are local-only and agents should not load them as skill files.
+  for skill in "$src"/*(/N); do
+    mkdir -p "$dest/${skill:t}"
+    for item in "$skill"/*(N) "$skill"/.[!.]*(N); do
+      [[ "${item:t}" == evals ]] && continue
+      cp -R "$item" "$dest/${skill:t}"/
+    done
   done
 }
 
@@ -168,10 +192,10 @@ prune_skills "$agents_dir/skills" "$codex_home/skills" codex
 prune_skills "$agents_dir/skills" "$claude_home/skills" claude
 prune_skills "$agents_dir/skills" "$grok_home/skills" grok
 
-copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
-copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
-copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
-copy_dir_contents "$agents_dir/skills" "$grok_home/skills"
+copy_skills "$agents_dir/skills" "$agents_home/skills"
+copy_skills "$agents_dir/skills" "$codex_home/skills"
+copy_skills "$agents_dir/skills" "$claude_home/skills"
+copy_skills "$agents_dir/skills" "$grok_home/skills"
 # Pi also discovers ~/.agents/skills; a second copy causes name collisions.
 
 if has_real_files "$agents_dir/prompts"; then
