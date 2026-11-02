@@ -33,8 +33,8 @@ copies the repository `.pi/` directory into `~/.pi/` (or `$PI_HOME`).
 
 Skills are mirrored. Before copying, the sync removes any top-level skill folder
 (or symlink) in `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
-`~/.grok/skills` that is not in `.agents/skills`. Removed skills are moved, not
-deleted, to `~/.local/share/agent-sync/removed-<timestamp>-<pid>/<agent>/<skill>`
+`~/.grok/skills` that is not in `.agents/skills` or `.agents/external-skills`.
+Removed skills are moved, not deleted, to `~/.local/share/agent-sync/removed-<timestamp>-<pid>/<agent>/<skill>`
 (`$XDG_DATA_HOME` is respected), and each one is printed. Symlinks are moved
 as links; their targets are never touched. Hidden entries such as
 `~/.codex/skills/.system`, plain files, and `~/.pi/agent/skills` are left alone.
@@ -42,6 +42,35 @@ To keep a local-only skill, add its name on its own line to
 `~/.config/agent-sync/keep-skills` (`$XDG_CONFIG_HOME` is respected; lines
 starting with `#` are ignored). `--dry-run` prints `would remove stale skill`
 lines without changing anything.
+
+### External skills
+
+Skills published elsewhere are listed in `.agents/external-skills` instead of
+being copied into `.agents/skills`. One per line:
+
+```
+<package> <skill>[#<ref>]
+humanlayer/skills show-me#4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329
+```
+
+`<package>` is anything `npx skills add` accepts (usually `owner/repo`).
+`<ref>` pins a branch, tag, or full 40-character commit SHA; the skills CLI
+cannot clone short SHAs. Without a ref, every sync takes the latest version.
+Blank lines and lines starting with `#` are ignored.
+
+For each entry, the sync runs
+`npx -y skills add <package>[#<ref>] --skill <skill> --copy -y` in a temporary
+folder with `DISABLE_TELEMETRY=1 DO_NOT_TRACK=1`, then copies the skill into
+the same four skills folders as the repo skills. Pruning never moves listed
+skills. If npx is missing, the network is down, or the skill is not found, the
+sync prints a warning, leaves the installed copies alone, and carries on. A
+name that also exists in `.agents/skills` aborts the sync. `--dry-run` prints
+`would install external skill <skill> from <package>[@<ref>]` without
+fetching.
+
+To add one, run `npx skills add <package> --list` to see its skill names, add
+a line, then run `.agents/agent-sync`. To update a pinned skill, change the
+ref.
 
 Other destination-only files (commands, agents, prompts, configs) are not
 deleted. After upgrading from the old sync, compare existing `~/.pi/agent/skills/<name>` directories with their

@@ -34,11 +34,12 @@ class AgentSyncTests(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items() if k not in HOME_VARS + XDG_VARS}
         self.env["HOME"] = str(self.home)
 
-    def run_sync(self, *args):
-        return subprocess.run(
+    def run_sync(self, *args, check=True):
+        result = subprocess.run(
             ["zsh", str(self.script), *args],
-            env=self.env, check=True, capture_output=True, text=True,
-        ).stdout
+            env=self.env, check=check, capture_output=True, text=True,
+        )
+        return result.stdout if check else result
 
     def assert_shared_skills(self, destinations):
         for dest in destinations:
@@ -151,6 +152,123 @@ class AgentSyncTests(unittest.TestCase):
         self.assertNotIn("stale skill", output)
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
+
+    def use_fake_npx(self, fail=False):
+        """Put an npx on PATH that 'installs' a skill offline and logs its call."""
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        self.npx_log = self.root / "npx.log"
+        npx = bin_dir / "npx"
+        npx.write_text(
+            "#!/bin/sh\n"
+            f'echo "$DISABLE_TELEMETRY $DO_NOT_TRACK $*" >> "{self.npx_log}"\n'
+            + ("exit 1\n" if fail else "")
+            + 'mkdir -p ".agents/skills/$6"\n'
+            'echo "fetched $4" > ".agents/skills/$6/SKILL.md"\n'
+        )
+        npx.chmod(0o755)
+        self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
+
+    def write_manifest(self, data):
+        (self.repo / ".agents/external-skills").write_bytes(data)
+
+    def npx_calls(self):
+        return self.npx_log.read_text().splitlines() if self.npx_log.exists() else []
+
+    def test_external_skill_is_copied_to_every_skill_home(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo tool\n")
+        output = self.run_sync()
+        self.assertEqual(
+            self.npx_calls(), ["1 1 -y skills add owner/repo --skill tool --copy -y"]
+        )
+        for home in SKILL_HOMES:
+            self.assertEqual(
+                (self.home / home / "skills/tool/SKILL.md").read_text(),
+                "fetched owner/repo\n",
+            )
+        self.assertIn("installed external skill tool from owner/repo\n", output)
+        self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
+
+    def test_pinned_ref_is_passed_to_the_cli(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo tool#v1.2\n")
+        output = self.run_sync()
+        self.assertEqual(
+            self.npx_calls(), ["1 1 -y skills add owner/repo#v1.2 --skill tool --copy -y"]
+        )
+        self.assertIn("installed external skill tool from owner/repo@v1.2\n", output)
+
+    def test_manifest_ignores_comments_blanks_crlf_and_spacing(self):
+        self.use_fake_npx()
+        self.write_manifest(
+            b"# external\r\n\r\n  owner/one   first \r\n\towner/two second#abc\t\n\n"
+        )
+        self.run_sync()
+        self.assertEqual(
+            [call.split()[5] for call in self.npx_calls()],
+            ["owner/one", "owner/two#abc"],
+        )
+
+    def test_malformed_manifest_line_aborts(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo\n")
+        result = self.run_sync(check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("external-skills:1: expected", result.stderr)
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_prune_keeps_external_skill(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo tool\n")
+        self.make_skill(".claude", "tool", "old\n")
+        self.run_sync()
+        self.assertEqual(self.removed_dirs(), [])
+        self.assertEqual(
+            (self.home / ".claude/skills/tool/SKILL.md").read_text(),
+            "fetched owner/repo\n",
+        )
+
+    def test_fetch_failure_keeps_installed_copy(self):
+        self.use_fake_npx(fail=True)
+        self.write_manifest(b"owner/repo tool\n")
+        kept = self.make_skill(".grok", "tool", "old\n")
+        result = self.run_sync(check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("could not fetch external skill tool from owner/repo", result.stderr)
+        self.assertEqual(kept.read_text(), "old\n")
+        self.assertEqual(self.removed_dirs(), [])
+        self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
+
+    def test_missing_npx_skips_external_skill(self):
+        bin_dir = self.root / "no-npx"
+        bin_dir.mkdir()
+        for tool in ("zsh", "date", "mkdir", "cp", "mv", "rm", "tail", "mktemp"):
+            (bin_dir / tool).symlink_to(shutil.which(tool))
+        self.env["PATH"] = str(bin_dir)
+        self.write_manifest(b"owner/repo tool\n")
+        kept = self.make_skill(".agents", "tool", "old\n")
+        result = self.run_sync(check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("npx not found; skipped external skill tool", result.stderr)
+        self.assertEqual(kept.read_text(), "old\n")
+
+    def test_external_skill_colliding_with_repo_skill_aborts(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo example\n")
+        result = self.run_sync(check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("external skill 'example' collides with", result.stderr)
+        self.assertEqual(self.npx_calls(), [])
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_dry_run_reports_external_skill_without_fetching(self):
+        self.use_fake_npx()
+        self.write_manifest(b"owner/repo tool#main\n")
+        output = self.run_sync("--dry-run")
+        self.assertIn("would install external skill tool from owner/repo@main\n", output)
+        self.assertEqual(self.npx_calls(), [])
+        self.assertEqual(list(self.home.iterdir()), [])
 
 if __name__ == "__main__":
     unittest.main()
