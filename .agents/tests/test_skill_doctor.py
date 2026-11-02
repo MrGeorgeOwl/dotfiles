@@ -119,6 +119,14 @@ class SkillDoctorTests(unittest.TestCase):
         self.assertTrue(orphans["local-only"]["kept"])
         self.assertTrue(orphans["hollow"]["hollow"])
 
+    def test_pi_and_omp_orphans_are_not_pruned(self):
+        self.install(".claude/skills", "local-only", "x\n")
+        self.install(".pi/agent/skills", "pi-only", "x\n")
+        self.install(".omp/agent/skills", "omp-only", "x\n")
+        orphans = {o["name"]: o["pruned"] for o in self.report()["orphans"]}
+        self.assertEqual(orphans, {"local-only": True, "pi-only": False, "omp-only": False})
+        self.assertNotIn("moves these", self.run_doctor().stdout)
+
     def test_registry_keeps_human_fields_and_check_catches_staleness(self):
         self.run_doctor("registry")
         registry = self.agents / "skills.yaml"

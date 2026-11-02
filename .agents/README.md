@@ -73,8 +73,9 @@ Run `.agents/skill-doctor` on each machine to see, without changing anything:
   `dormant` if not, `unknown` if the machine has no logs;
 - installed copies whose `SKILL.md` differs from the repo (`drift`) or is
   missing;
-- skills installed but not in the repo, which agent-sync would move unless
-  they are in `keep-skills`.
+- skills installed but not in the repo. Those in the agents, codex, claude
+  and grok folders are tagged `agent-sync moves it` unless they are in
+  `keep-skills`; agent-sync never touches the pi and omp folders.
 
 Add `--json` for machine-readable output.
 

@@ -394,8 +394,10 @@ def build_report():
         for name, path in sorted(entries.items()):
             if name in repo_names:
                 continue
+            kept = name in keep
             orphans.append({"name": name, "root": str(install_roots()[label]), "agent": label,
-                            "hollow": path is None, "kept": name in keep, **use(name)})
+                            "hollow": path is None, "kept": kept,
+                            "pruned": label in SYNCED and not kept, **use(name)})
 
     logs = {agent: {"files": u.files, "first": u.first, "last": u.last} for agent, u in usage.items()}
     return {"host": os.uname().nodename, "logs": logs, "dormant_after_days": DORMANT_DAYS,
@@ -416,9 +418,10 @@ def print_report(rep):
         print(f"{s['name']:24} {s['status']:12} {s['usage']:8} {s['total']:>5}  "
               f"{s['last_used'] or '-':10}  {', '.join(notes)}")
     if rep["orphans"]:
-        print("\ninstalled but not in the repo (agent-sync moves these unless kept):")
+        print("\ninstalled but not in the repo:")
         for o in rep["orphans"]:
             tags = [o["agent"]] + (["kept"] if o["kept"] else []) + (["no SKILL.md"] if o["hollow"] else [])
+            tags += ["agent-sync moves it"] if o["pruned"] else []
             print(f"  {o['name']:22} {o['usage']:8} {o['total']:>5}  {o['last_used'] or '-':10}  {', '.join(tags)}")
     print(f"\nusage: active = loaded within {DORMANT_DAYS} days of the newest log day; "
           "dormant = not; unknown = no logs.\nZero loads only means zero inside the log window above.")
