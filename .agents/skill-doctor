@@ -34,18 +34,18 @@ SKILL_PATH = re.compile(r"/([A-Za-z0-9._:~-]+)/SKILL\.md")
 DORMANT_DAYS = 60
 
 
-def home(var, default):
+def resolve_home(var, default):
     return Path(os.environ.get(var) or Path.home() / default)
 
 
-def install_roots():
+def list_install_roots():
     """Skill folders agent-sync writes to, plus Pi/omp roots it leaves alone."""
     return {
-        "agents": home("AGENTS_HOME", ".agents") / "skills",
-        "codex": home("CODEX_HOME", ".codex") / "skills",
-        "claude": home("CLAUDE_HOME", ".claude") / "skills",
-        "grok": home("GROK_HOME", ".grok") / "skills",
-        "pi": home("PI_HOME", ".pi") / "agent/skills",
+        "agents": resolve_home("AGENTS_HOME", ".agents") / "skills",
+        "codex": resolve_home("CODEX_HOME", ".codex") / "skills",
+        "claude": resolve_home("CLAUDE_HOME", ".claude") / "skills",
+        "grok": resolve_home("GROK_HOME", ".grok") / "skills",
+        "pi": resolve_home("PI_HOME", ".pi") / "agent/skills",
         "omp": Path.home() / ".omp/agent/skills",
     }
 
@@ -55,7 +55,7 @@ SYNCED = ("agents", "codex", "claude", "grok")
 
 # --- skills on disk -------------------------------------------------------
 
-def frontmatter(path):
+def read_frontmatter(path):
     """Return the name/description pairs from a SKILL.md YAML header."""
     text = path.read_text(errors="replace")
     match = re.match(r"---\r?\n(.*?)\r?\n---", text, re.S)
@@ -70,20 +70,20 @@ def frontmatter(path):
     return fields
 
 
-def short_hash(path):
+def hash_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
 
 
-def repo_skills():
+def list_repo_skills():
     """Top-level folders in .agents/skills; a folder without SKILL.md is hollow."""
     return sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
-def problems(skill_dir):
+def find_problems(skill_dir):
     path = skill_dir / "SKILL.md"
     if not path.is_file():
         return ["no SKILL.md"]
-    meta, found = frontmatter(path), []
+    meta, found = read_frontmatter(path), []
     name, desc = meta.get("name", ""), meta.get("description", "")
     if name != skill_dir.name:
         found.append(f"frontmatter name {name!r} != folder name")
@@ -96,10 +96,10 @@ def problems(skill_dir):
     return found
 
 
-def installed():
+def list_installed():
     """{root label: {skill name: SKILL.md path or None for hollow}} for this machine."""
     result = {}
-    for label, root in install_roots().items():
+    for label, root in list_install_roots().items():
         entries = {}
         if root.is_dir():
             for item in root.iterdir():
@@ -111,8 +111,8 @@ def installed():
     return result
 
 
-def keep_list():
-    path = home("XDG_CONFIG_HOME", ".config") / "agent-sync/keep-skills"
+def read_keep_list():
+    path = resolve_home("XDG_CONFIG_HOME", ".config") / "agent-sync/keep-skills"
     if not path.is_file():
         return set()
     lines = (line.strip() for line in path.read_text(errors="replace").splitlines())
@@ -121,7 +121,7 @@ def keep_list():
 
 # --- usage from session logs (from the skill_usage.py research script) ---
 
-def day(ts):
+def parse_day(ts):
     if isinstance(ts, (int, float)):
         try:
             return datetime.datetime.fromtimestamp(ts / (1000 if ts > 1e12 else 1)).strftime("%Y-%m-%d")
@@ -141,7 +141,7 @@ class Usage:
         self.seen = set()
 
     def saw(self, ts):
-        t = day(ts)
+        t = parse_day(ts)
         if t:
             self.first = min(self.first or t, t)
             self.last = max(self.last or t, t)
@@ -152,12 +152,12 @@ class Usage:
         self.seen.add(key)
         skill = skill.split(":")[-1]
         self.loads[skill] += 1
-        t = day(ts)
+        t = parse_day(ts)
         if t:
             self.last_use[skill] = max(self.last_use.get(skill, t), t)
 
 
-def records(pattern):
+def read_records(pattern):
     """Yield (file, line, parsed json or None) for every jsonl line under pattern."""
     for name in glob.glob(str(pattern), recursive=True):
         try:
@@ -171,7 +171,7 @@ def records(pattern):
             continue
 
 
-def text_of(content):
+def extract_text(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -179,21 +179,21 @@ def text_of(content):
     return ""
 
 
-def skill_from_path(path):
+def parse_skill_path(path):
     match = SKILL_PATH.search(str(path))
     return match.group(1) if match else None
 
 
 def scan(usage, pattern, handle):
     files = set()
-    for name, line, record in records(pattern):
+    for name, line, record in read_records(pattern):
         files.add(name)
         if isinstance(record, dict):
             handle(usage, name, line, record)
     usage.files += len(files)
 
 
-def claude_record(u, name, line, r):
+def parse_claude_record(u, name, line, r):
     ts = r.get("timestamp")
     u.saw(ts)
     content = (r.get("message") or {}).get("content")
@@ -205,14 +205,14 @@ def claude_record(u, name, line, r):
             if block.get("name") == "Skill":
                 u.add(args.get("skill"), ts, block.get("id"))
             elif block.get("name") == "Read":
-                u.add(skill_from_path(args.get("file_path", "")), ts, block.get("id"))
+                u.add(parse_skill_path(args.get("file_path", "")), ts, block.get("id"))
     elif r.get("type") == "user":
-        match = re.search(r"<command-name>/?([A-Za-z0-9:_-]+)</command-name>", text_of(content))
+        match = re.search(r"<command-name>/?([A-Za-z0-9:_-]+)</command-name>", extract_text(content))
         if match:
             u.add(match.group(1), ts, r.get("uuid"))
 
 
-def codex_record(u, name, line, r):
+def parse_codex_record(u, name, line, r):
     ts = r.get("timestamp")
     u.saw(ts)
     payload = r.get("payload") or {}
@@ -230,7 +230,7 @@ def codex_record(u, name, line, r):
             u.add(match.group(1), ts, (payload.get("call_id"), match.group(1)))
 
 
-def pi_record(u, name, line, r):
+def parse_pi_record(u, name, line, r):
     ts = r.get("timestamp")
     u.saw(ts)
     msg = r.get("message") or {}
@@ -240,35 +240,35 @@ def pi_record(u, name, line, r):
             if isinstance(block, dict) and block.get("type") == "toolCall" and block.get("name") == "read":
                 path = str((block.get("arguments") or {}).get("path", ""))
                 if path.endswith("SKILL.md"):
-                    u.add(skill_from_path(path), ts, block.get("id"))
+                    u.add(parse_skill_path(path), ts, block.get("id"))
     elif msg.get("role") == "toolResult":  # omp: "[Skill file: <path>]"
         match = re.search(r"\[Skill file: [^\]]*?/([^/\]]+)/SKILL\.md\]", json.dumps(content))
         if match:
             u.add(match.group(1), ts, msg.get("toolCallId"))
     elif msg.get("role") == "user":
-        match = re.match(r"\s*/skill:([A-Za-z0-9._-]+)", text_of(content))
+        match = re.match(r"\s*/skill:([A-Za-z0-9._-]+)", extract_text(content))
         if match:
             u.add(match.group(1), ts, (name, ts))
 
 
-def grok_record(u, name, line, r):
+def parse_grok_record(u, name, line, r):
     ts = r.get("timestamp")
     u.saw(ts)
     update = (r.get("params") or {}).get("update") or {}
     if update.get("sessionUpdate") == "tool_call":
         raw = json.dumps(update.get("rawInput") or update.get("title") or "")
-        u.add(skill_from_path(raw), ts, update.get("toolCallId"))
+        u.add(parse_skill_path(raw), ts, update.get("toolCallId"))
 
 
-def usage_by_agent():
-    claude, codex = home("CLAUDE_HOME", ".claude"), home("CODEX_HOME", ".codex")
+def count_usage_by_agent():
+    claude, codex = resolve_home("CLAUDE_HOME", ".claude"), resolve_home("CODEX_HOME", ".codex")
     sources = {
-        "claude": [(claude / "projects/**/*.jsonl", claude_record)],
-        "codex": [(codex / "sessions/**/*.jsonl", codex_record),
-                  (codex / "archived_sessions/*.jsonl", codex_record)],
-        "pi": [(home("PI_HOME", ".pi") / "agent/sessions/**/*.jsonl", pi_record)],
-        "omp": [(Path.home() / ".omp/agent/sessions/**/*.jsonl", pi_record)],
-        "grok": [(home("GROK_HOME", ".grok") / "sessions/**/updates.jsonl", grok_record)],
+        "claude": [(claude / "projects/**/*.jsonl", parse_claude_record)],
+        "codex": [(codex / "sessions/**/*.jsonl", parse_codex_record),
+                  (codex / "archived_sessions/*.jsonl", parse_codex_record)],
+        "pi": [(resolve_home("PI_HOME", ".pi") / "agent/sessions/**/*.jsonl", parse_pi_record)],
+        "omp": [(Path.home() / ".omp/agent/sessions/**/*.jsonl", parse_pi_record)],
+        "grok": [(resolve_home("GROK_HOME", ".grok") / "sessions/**/updates.jsonl", parse_grok_record)],
     }
     result = {}
     for agent, parts in sources.items():
@@ -313,23 +313,23 @@ def render_registry():
         "# Edit only `status` (active | experimental | deprecated) and `purpose`;",
         "# names and descriptions come from each SKILL.md and are overwritten.",
     ]
-    for skill in repo_skills():
+    for skill in list_repo_skills():
         if not (skill / "SKILL.md").is_file():
             continue
         human = old.get(skill.name, {})
         out += [
             f"- name: {quote(skill.name)}",
-            f"  description: {quote(frontmatter(skill / 'SKILL.md').get('description', ''))}",
+            f"  description: {quote(read_frontmatter(skill / 'SKILL.md').get('description', ''))}",
             f"  status: {quote(human.get('status') or 'active')}",
             f"  purpose: {quote(human.get('purpose') or '')}",
         ]
     return "\n".join(out) + "\n"
 
 
-def registry_errors():
+def find_registry_errors():
     errors = []
-    for skill in repo_skills():
-        errors += [f"{skill.name}: {p}" for p in problems(skill)]
+    for skill in list_repo_skills():
+        errors += [f"{skill.name}: {p}" for p in find_problems(skill)]
     for name, fields in read_registry().items():
         if fields.get("status") not in STATUSES:
             errors.append(f"{name}: status must be one of {', '.join(STATUSES)}")
@@ -342,7 +342,7 @@ def cmd_registry(args):
     if not args.check:
         REGISTRY.write_text(render_registry())
         print(f"skill-doctor: wrote {REGISTRY}")
-    errors = registry_errors()
+    errors = find_registry_errors()
     for error in errors:
         print(f"skill-doctor: {error}", file=sys.stderr)
     return 1 if errors else 0
@@ -352,15 +352,15 @@ def cmd_registry(args):
 
 def build_report():
     registry = read_registry()
-    copies = installed()
-    usage = usage_by_agent()
-    keep = keep_list()
+    copies = list_installed()
+    usage = count_usage_by_agent()
+    keep = read_keep_list()
     newest = max((u.last for u in usage.values() if u.last), default=None)
     cutoff = None
     if newest:
         cutoff = (datetime.date.fromisoformat(newest) - datetime.timedelta(days=DORMANT_DAYS)).isoformat()
 
-    def use(name):
+    def summarize_usage(name):
         loads = {agent: u.loads[name] for agent, u in usage.items() if u.loads[name]}
         last = max((u.last_use[name] for u in usage.values() if name in u.last_use), default=None)
         if not newest:
@@ -372,23 +372,23 @@ def build_report():
         return {"loads": loads, "total": sum(loads.values()), "last_used": last, "usage": state}
 
     skills, repo_names = [], set()
-    for skill in repo_skills():
+    for skill in list_repo_skills():
         repo_names.add(skill.name)
         path = skill / "SKILL.md"
-        repo_hash = short_hash(path) if path.is_file() else None
+        repo_hash = hash_file(path) if path.is_file() else None
         where = {}
         for label in SYNCED:
             dest = copies[label].get(skill.name, False)
             where[label] = "missing" if dest is False else "hollow" if dest is None else (
-                "ok" if short_hash(dest) == repo_hash else "drift")
+                "ok" if hash_file(dest) == repo_hash else "drift")
         skills.append({
             "name": skill.name,
             "status": registry.get(skill.name, {}).get("status", "unregistered"),
-            "problems": problems(skill),
+            "problems": find_problems(skill),
             "hash": repo_hash,
             "copies": where,
             "evals": (skill / "evals").is_dir(),
-            **use(skill.name),
+            **summarize_usage(skill.name),
         })
 
     orphans = []
@@ -397,9 +397,9 @@ def build_report():
             if name in repo_names:
                 continue
             kept = name in keep
-            orphans.append({"name": name, "root": str(install_roots()[label]), "agent": label,
+            orphans.append({"name": name, "root": str(list_install_roots()[label]), "agent": label,
                             "hollow": path is None, "kept": kept,
-                            "pruned": label in SYNCED and not kept, **use(name)})
+                            "pruned": label in SYNCED and not kept, **summarize_usage(name)})
 
     logs = {agent: {"files": u.files, "first": u.first, "last": u.last} for agent, u in usage.items()}
     return {"host": os.uname().nodename, "logs": logs, "dormant_after_days": DORMANT_DAYS,
