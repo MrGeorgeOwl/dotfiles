@@ -59,7 +59,7 @@ class SkillDoctorTests(unittest.TestCase):
         path.write_text(text if text is not None else source.read_text())
         return path
 
-    def test_missing_logs_and_installs_are_reported_not_fatal(self):
+    def test_no_logs_or_installs(self):
         rep = self.report()
         self.assertEqual({log["files"] for log in rep["logs"].values()}, {0})
         [alpha, beta] = rep["skills"]
@@ -102,19 +102,20 @@ class SkillDoctorTests(unittest.TestCase):
         alpha, beta = self.report()["skills"]
         self.assertEqual((alpha["usage"], beta["usage"]), ("active", "dormant"))
 
-    def test_drift_orphans_and_keep_list(self):
+    def test_copy_drift(self):
         self.install(".claude/skills", "alpha")
         self.install(".codex/skills", "alpha", "edited by hand\n")
+        copies = self.report()["skills"][0]["copies"]
+        self.assertEqual((copies["claude"], copies["codex"], copies["grok"]), ("ok", "drift", "missing"))
+
+    def test_orphans_and_keep_list(self):
         self.install(".grok/skills", "local-only", "x\n")
         (self.home / ".agents/skills/hollow").mkdir(parents=True)
         (self.home / ".codex/skills/.system").mkdir(parents=True)
         keep = self.home / ".config/agent-sync/keep-skills"
         keep.parent.mkdir(parents=True)
         keep.write_text("# mine\nlocal-only\n")
-        rep = self.report()
-        copies = rep["skills"][0]["copies"]
-        self.assertEqual((copies["claude"], copies["codex"], copies["grok"]), ("ok", "drift", "missing"))
-        orphans = {o["name"]: o for o in rep["orphans"]}
+        orphans = {o["name"]: o for o in self.report()["orphans"]}
         self.assertEqual(sorted(orphans), ["hollow", "local-only"])
         self.assertTrue(orphans["local-only"]["kept"])
         self.assertTrue(orphans["hollow"]["hollow"])
@@ -127,33 +128,44 @@ class SkillDoctorTests(unittest.TestCase):
         self.assertEqual(orphans, {"local-only": True, "pi-only": False, "omp-only": False})
         self.assertNotIn("moves these", self.run_doctor().stdout)
 
-    def test_registry_keeps_human_fields_and_check_catches_staleness(self):
+    def test_registry_check_catches_staleness(self):
+        self.run_doctor("registry")
+        self.add_skill("beta", "Use for beta, updated.")
+        registry = self.agents / "skills.yaml"
+        stale = registry.read_text()
+        result = self.run_doctor("registry", "--check", check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("out of date", result.stderr)
+        self.assertEqual(registry.read_text(), stale)
+
+    def test_registry_regenerate_keeps_human_fields(self):
         self.run_doctor("registry")
         registry = self.agents / "skills.yaml"
         registry.write_text(registry.read_text().replace(
             '"beta"\n  description: "Use for beta."\n  status: "active"\n  purpose: ""',
             '"beta"\n  description: "Use for beta."\n  status: "deprecated"\n  purpose: "old"'))
         self.add_skill("beta", "Use for beta, updated.")
-        stale = registry.read_text()
-        result = self.run_doctor("registry", "--check", check=False)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("out of date", result.stderr)
-        self.assertEqual(registry.read_text(), stale)
         self.run_doctor("registry")
         self.assertIn('"beta"\n  description: "Use for beta, updated."\n'
                       '  status: "deprecated"\n  purpose: "old"', registry.read_text())
         self.assertEqual(self.run_doctor("registry", "--check").returncode, 0)
 
-    def test_registry_check_rejects_bad_frontmatter_and_status(self):
+    def test_registry_check_rejects_bad_frontmatter(self):
         (self.agents / "skills/alpha/SKILL.md").write_text("---\nname: other\ndescription: x\n---\n")
         (self.agents / "skills/empty").mkdir()
         self.run_doctor("registry", check=False)
+        result = self.run_doctor("registry", "--check", check=False)
+        self.assertEqual(result.returncode, 1)
+        for text in ("alpha: frontmatter name 'other'", "empty: no SKILL.md"):
+            self.assertIn(text, result.stderr)
+
+    def test_registry_check_rejects_unknown_status(self):
+        self.run_doctor("registry")
         registry = self.agents / "skills.yaml"
         registry.write_text(registry.read_text().replace('"active"', '"maybe"', 1))
         result = self.run_doctor("registry", "--check", check=False)
         self.assertEqual(result.returncode, 1)
-        for text in ("alpha: frontmatter name 'other'", "empty: no SKILL.md", "alpha: status must be"):
-            self.assertIn(text, result.stderr)
+        self.assertIn("alpha: status must be", result.stderr)
 
     def test_registry_check_rejects_multiline_description(self):
         self.add_skill("alpha", ">-\n  Use for\n  alpha.")
@@ -162,15 +174,25 @@ class SkillDoctorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("alpha: description must be one line", result.stderr)
 
-    def test_eval_runs_the_skill_eval_script(self):
-        runner = self.agents / "skills/alpha/evals/run"
+    def add_eval_runner(self, name):
+        runner = self.agents / f"skills/{name}/evals/run"
         runner.parent.mkdir()
         runner.write_text('#!/bin/sh\necho "evals for $SKILL_DIR in $PWD $1"\nexit 3\n')
         runner.chmod(0o755)
+        return runner
+
+    def test_eval_runs_the_skill_eval_script(self):
+        runner = self.add_eval_runner("alpha")
         result = self.run_doctor("eval", "alpha", "--quick", check=False)
         self.assertEqual(result.returncode, 3)
         self.assertIn(f"evals for {runner.parent.parent} in {runner.parent} --quick", result.stdout)
-        self.assertTrue(self.report()["skills"][0]["evals"])
+
+    def test_report_flags_skills_with_evals(self):
+        self.add_eval_runner("alpha")
+        alpha, beta = self.report()["skills"]
+        self.assertEqual((alpha["evals"], beta["evals"]), (True, False))
+
+    def test_eval_without_runner_exits_2(self):
         self.assertEqual(self.run_doctor("eval", "beta", check=False).returncode, 2)
 
     def test_repo_registry_is_up_to_date(self):
