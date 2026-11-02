@@ -378,9 +378,13 @@ def build_report():
         repo_hash = hash_file(path) if path.is_file() else None
         where = {}
         for label in SYNCED:
-            dest = copies[label].get(skill.name, False)
-            where[label] = "missing" if dest is False else "hollow" if dest is None else (
-                "ok" if hash_file(dest) == repo_hash else "drift")
+            entries = copies[label]
+            if skill.name not in entries:
+                where[label] = "missing"
+            elif entries[skill.name] is None:
+                where[label] = "hollow"
+            else:
+                where[label] = "ok" if hash_file(entries[skill.name]) == repo_hash else "drift"
         skills.append({
             "name": skill.name,
             "status": registry.get(skill.name, {}).get("status", "unregistered"),
