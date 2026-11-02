@@ -91,6 +91,8 @@ def problems(skill_dir):
         found.append("folder name must be lowercase-hyphen, <= 64 chars")
     if not desc or len(desc) > 1024:
         found.append("description missing or > 1024 chars")
+    elif desc[0] in ">|":
+        found.append("description must be one line")
     return found
 
 

@@ -61,8 +61,8 @@ copied from each `SKILL.md`; `status` (`active`, `experimental`, `deprecated`)
 and `purpose` are yours to edit. After adding a skill or changing a
 description, run `.agents/skill-doctor registry`; it keeps your edits. The
 tests run `.agents/skill-doctor registry --check`, which fails when the file is
-stale, a frontmatter `name` does not match its folder, or a folder has no
-`SKILL.md`.
+stale, a frontmatter `name` does not match its folder, a `description` is
+not on one line, or a folder has no `SKILL.md`.
 
 Run `.agents/skill-doctor` on each machine to see, without changing anything:
 

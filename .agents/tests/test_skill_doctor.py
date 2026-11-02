@@ -155,6 +155,13 @@ class SkillDoctorTests(unittest.TestCase):
         for text in ("alpha: frontmatter name 'other'", "empty: no SKILL.md", "alpha: status must be"):
             self.assertIn(text, result.stderr)
 
+    def test_registry_check_rejects_multiline_description(self):
+        self.add_skill("alpha", ">-\n  Use for\n  alpha.")
+        self.run_doctor("registry", check=False)
+        result = self.run_doctor("registry", "--check", check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha: description must be one line", result.stderr)
+
     def test_eval_runs_the_skill_eval_script(self):
         runner = self.agents / "skills/alpha/evals/run"
         runner.parent.mkdir()
