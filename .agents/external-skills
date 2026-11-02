@@ -1,0 +1,6 @@
+# Skills fetched by agent-sync with `npx skills add` instead of kept in .agents/skills.
+# One per line: <package> <skill>[#<ref>]
+#   <package>  anything `npx skills add` accepts, e.g. owner/repo
+#   <ref>      branch, tag, or full 40-character commit SHA (short SHAs fail)
+# Leave out #<ref> to take the latest version on every sync.
+humanlayer/skills show-me#4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329

@@ -23,6 +23,11 @@ ${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>-<pid>/<agent>/.
 Hidden entries (such as ~/.codex/skills/.system), plain files, and skills
 listed one per line in ${XDG_CONFIG_HOME:-~/.config}/agent-sync/keep-skills
 are left alone. Other destination-only files are not deleted.
+
+Skills listed in .agents/external-skills ("<package> <skill>[#<ref>]" per
+line) are fetched with "npx skills add" and copied into the same skills
+destinations. A skill that cannot be fetched is skipped with a warning and its
+installed copies are left as they are.
 EOF
 }
 
@@ -33,6 +38,10 @@ die() {
 
 log() {
   echo "agent-sync: $*"
+}
+
+warn() {
+  echo "agent-sync: warning: $*" >&2
 }
 
 repo_root() {
@@ -102,6 +111,7 @@ prune_skills() {
     # Only directories or symlinks are skills; mv moves a symlink, not its target.
     [[ -L "$item" || -d "$item" ]] || continue
     [[ -d "$src/$name" ]] && continue
+    (( ${external_names[(Ie)$name]} )) && continue
     (( ${keep_skills[(Ie)$name]} )) && continue
 
     if (( dry_run )); then
@@ -114,6 +124,81 @@ prune_skills() {
     mv "$item" "$target"
     log "removed stale skill $item -> $target"
   done
+}
+
+read_external_skills() {
+  local manifest="$1"
+  local line spec name ref
+  local -a fields
+  local -i lineno=0
+
+  [[ -f "$manifest" ]] || return 0
+
+  for line in "${(@f)$(<"$manifest")}"; do
+    (( ++lineno ))
+    fields=(${=line//$'\r'/})
+    (( $#fields )) || continue
+    [[ "$fields[1]" == \#* ]] && continue
+    (( $#fields == 2 )) || die "$manifest:$lineno: expected '<package> <skill>[#<ref>]'"
+
+    spec="$fields[2]"
+    name="${spec%%\#*}"
+    ref=""
+    [[ "$spec" == *\#* ]] && ref="${spec#*\#}"
+    [[ -n "$name" && "$name" != */* && "$name" != .* ]] || die "$manifest:$lineno: bad skill name '$name'"
+    [[ "$spec" != *\#* || -n "$ref" ]] || die "$manifest:$lineno: empty ref after '#'"
+    (( ${external_names[(Ie)$name]} )) && die "$manifest:$lineno: skill '$name' is listed twice"
+    [[ -e "$agents_dir/skills/$name" ]] && die "$manifest:$lineno: external skill '$name' collides with .agents/skills/$name"
+
+    external_names+=("$name")
+    external_packages+=("$fields[1]")
+    external_refs+=("$ref")
+  done
+}
+
+# Fetch one external skill into a scratch project and copy it like a repo skill.
+# Any failure is a warning: existing installed copies stay untouched.
+install_external_skill() {
+  local package="$1"
+  local name="$2"
+  local ref="$3"
+  local source="$package${ref:+#$ref}"
+  local label="$package${ref:+@$ref}"
+  local work fetched dest
+
+  if (( dry_run )); then
+    log "would install external skill $name from $label"
+    return 0
+  fi
+
+  if (( ! $+commands[npx] )); then
+    warn "npx not found; skipped external skill $name from $label"
+    return 0
+  fi
+
+  work="$fetch_root/$name"
+  mkdir -p "$work"
+  # Project-level install: the CLI writes only to $work/.agents/skills.
+  # GIT_TERMINAL_PROMPT=0 makes a private or missing repo fail instead of prompting.
+  if ! (cd "$work" && DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 GIT_TERMINAL_PROMPT=0 \
+      npx -y skills add "$source" --skill "$name" --copy -y) \
+      </dev/null >"$work.log" 2>&1; then
+    warn "could not fetch external skill $name from $label; kept installed copies"
+    tail -n 5 "$work.log" >&2
+    return 0
+  fi
+
+  fetched="$work/.agents/skills/$name"
+  if [[ ! -f "$fetched/SKILL.md" ]]; then
+    warn "external skill $name not found in $label; kept installed copies"
+    return 0
+  fi
+
+  for dest in "$agents_home/skills" "$codex_home/skills" "$claude_home/skills" "$grok_home/skills"; do
+    mkdir -p "$dest"
+    cp -R "$fetched" "$dest"/
+  done
+  log "installed external skill $name from $label"
 }
 
 dry_run=0
@@ -163,6 +248,11 @@ removed_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-sync/removed-$(date +%Y%
 repo_skills=("$agents_dir"/skills/*(/N))
 (( $#repo_skills )) || die "no skills in $agents_dir/skills; refusing to prune"
 
+external_names=()
+external_packages=()
+external_refs=()
+read_external_skills "$agents_dir/external-skills"
+
 prune_skills "$agents_dir/skills" "$agents_home/skills" agents
 prune_skills "$agents_dir/skills" "$codex_home/skills" codex
 prune_skills "$agents_dir/skills" "$claude_home/skills" claude
@@ -173,6 +263,16 @@ copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
 copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
 copy_dir_contents "$agents_dir/skills" "$grok_home/skills"
 # Pi also discovers ~/.agents/skills; a second copy causes name collisions.
+
+if (( $#external_names )); then
+  (( dry_run )) || {
+    fetch_root="$(mktemp -d)"
+    trap 'rm -rf "$fetch_root"' EXIT
+  }
+  for i in {1..$#external_names}; do
+    install_external_skill "$external_packages[$i]" "$external_names[$i]" "$external_refs[$i]"
+  done
+fi
 
 if has_real_files "$agents_dir/prompts"; then
   copy_dir_contents "$agents_dir/prompts" "$codex_home/prompts"
