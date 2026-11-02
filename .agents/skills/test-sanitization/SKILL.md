@@ -45,10 +45,15 @@ Preserve user changes. Do not change production behavior.
    Turn setup helper functions into fixtures.
    Use `@pytest.mark.usefixtures` when a test needs only a fixture's side effect.
    Fold a fixture into the fixture that is its only user.
-6. **Mirror the source layout.**
+6. **Check one concept per test.**
+   A failure should name the broken behavior.
+   Snapshot a generated query, such as SQL, as a whole instead of asserting on pieces.
+   Never edit snapshots by hand.
+   Keep focused tests for corner cases.
+7. **Mirror the source layout.**
    Test `src/foo/bar.py` in `tests/foo/test_bar.py`.
    Move shared fixtures to the nearest common `conftest.py`.
-7. **Fix test hygiene.**
+8. **Fix test hygiene.**
    Make tests fast, independent, repeatable, and self-validating.
    Assert results instead of leaving anything to check by hand.
    Replace real app ids, campaign ids, and app names with fake ones.
