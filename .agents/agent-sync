@@ -74,6 +74,7 @@ copy_path() {
 copy_dir_contents() {
   local src="$1"
   local dest="$2"
+  local skip="${3:-}"
   local item
 
   [[ -d "$src" ]] || return 0
@@ -86,6 +87,7 @@ copy_dir_contents() {
   mkdir -p "$dest"
 
   for item in "$src"/*(N) "$src"/.[!.]*(N); do
+    [[ -n "$skip" && "${item:t}" == "$skip" ]] && continue
     cp -R "$item" "$dest"/
   done
 }
@@ -93,7 +95,7 @@ copy_dir_contents() {
 copy_skills() {
   local src="$1"
   local dest="$2"
-  local skill item
+  local item
 
   [[ -d "$src" ]] || return 0
 
@@ -102,14 +104,15 @@ copy_skills() {
     return 0
   fi
 
-  # Like copy_dir_contents, but a skill's evals/ folder stays in the repo:
-  # evals are local-only and agents should not load them as skill files.
-  for skill in "$src"/*(/N); do
-    mkdir -p "$dest/${skill:t}"
-    for item in "$skill"/*(N) "$skill"/.[!.]*(N); do
-      [[ "${item:t}" == evals ]] && continue
-      cp -R "$item" "$dest/${skill:t}"/
-    done
+  mkdir -p "$dest"
+
+  # A skill's evals/ folder is local-only; agents should not load it.
+  for item in "$src"/*(N) "$src"/.[!.]*(N); do
+    if [[ -d "$item" ]]; then
+      copy_dir_contents "$item" "$dest/${item:t}" evals
+    else
+      cp -R "$item" "$dest"/
+    fi
   done
 }
 
