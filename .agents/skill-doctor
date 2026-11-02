@@ -119,7 +119,7 @@ def read_keep_list():
     return {line for line in lines if line and not line.startswith("#")}
 
 
-# --- usage from session logs (from the skill_usage.py research script) ---
+# --- usage from session logs ---
 
 def parse_day(ts):
     if isinstance(ts, (int, float)):
