@@ -5,6 +5,8 @@ onboarding = false
 name = "solarized-light"
 
 [terminal]
+# Linux "auto" starts non-login shells, which skip /etc/profile.d/locale.sh.
+shell_mode = "login"
 new_cwd = "follow"
 
 [keys]
