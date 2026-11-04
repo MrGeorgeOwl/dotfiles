@@ -1,0 +1,17 @@
+id = "agent-recency"
+name = "Agent recency"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["python3", "apply-view.py"]
+
+[[actions]]
+id = "apply"
+title = "Reorder spaces and agents by activity"
+command = ["python3", "apply-view.py"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "apply-view.py"]

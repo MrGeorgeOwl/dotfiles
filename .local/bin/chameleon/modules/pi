@@ -1,0 +1,101 @@
+#!/usr/bin/env sh
+
+set -u
+
+if [ -z "${CHAMELEON_ROOT:-}" ]; then
+  MODULE_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+  CHAMELEON_ROOT="$(CDPATH= cd "$MODULE_DIR/.." && pwd)"
+fi
+. "$CHAMELEON_ROOT/lib/common.sh"
+
+apply_pi() {
+  theme="$1"
+  pi_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+
+  if ! command -v pi >/dev/null 2>&1 && [ ! -d "$pi_dir" ]; then
+    log_info "pi: not installed; nothing to do"
+    return 0
+  fi
+
+  profile="$(theme_value pi "$theme")" || {
+    skip_module "pi: no profile mapped for theme '$theme'; skipped"
+    return $?
+  }
+  if ! is_safe_name "$profile"; then
+    fail_module "pi: invalid profile '$profile' for theme '$theme'"
+    return $?
+  fi
+  source_file="$CHAMELEON_CONFIG_DIR/pi/$profile.json"
+  if [ ! -f "$source_file" ]; then
+    skip_module "pi: profile '$source_file' is not installed; skipped"
+    return $?
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    fail_module "pi: python3 is required to install the theme"
+    return $?
+  fi
+
+  # Keep one active custom theme: Pi watches its JSON file, not settings.json.
+  # Replacing this file repaints running sessions without terminal notifications.
+  if ! python3 - "$pi_dir" "$source_file" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+agent_dir = Path(sys.argv[1])
+with open(sys.argv[2], encoding="utf-8") as handle:
+    theme = json.load(handle)
+theme["name"] = "chameleon"
+settings_path = (agent_dir / "settings.json").resolve()
+try:
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    settings = {}
+if not isinstance(settings, dict):
+    sys.exit("settings.json is not a JSON object")
+
+
+def write_json(path, value):
+    # Follow symlinks so linked configs keep their original location.
+    path = path.resolve()
+    content = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        if path.exists():
+            os.chmod(temporary, path.stat().st_mode & 0o777)
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
+write_json(agent_dir / "themes/chameleon.json", theme)
+if settings.get("theme") != "chameleon":
+    settings["theme"] = "chameleon"
+    write_json(settings_path, settings)
+PY
+  then
+    fail_module "pi: failed to install the chameleon theme"
+    return $?
+  fi
+
+  log_info "pi: applied '$profile' for theme '$theme'"
+}
+
+main() {
+  if [ "${1:-}" != "apply" ] || [ "$#" -ne 2 ]; then
+    printf 'Usage: pi apply <theme>\n' >&2
+    return 2
+  fi
+
+  apply_pi "$2"
+}
+
+main "$@"

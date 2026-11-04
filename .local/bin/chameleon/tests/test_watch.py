@@ -88,7 +88,7 @@ class WatchCLI(unittest.TestCase):
         shutil.copy2(ROOT / 'chameleon', root / 'chameleon')
         shutil.copy2(ROOT / 'lib/common.sh', root / 'lib/common.sh')
         events = self.home / 'modules.log'
-        names = ['ghostty', 'btop', 'nvim', 'herdr', 'claude', 'grok',
+        names = ['ghostty', 'btop', 'nvim', 'herdr', 'claude', 'grok', 'pi',
                  'desktop', 'wallpaper']
         for name in names:
             module = root / 'modules' / name

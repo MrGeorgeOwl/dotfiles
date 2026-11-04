@@ -99,7 +99,7 @@ and `[theme.*]` tables in `~/.config/herdr/config.toml` with
 `herdr server reload-config` so running clients switch without a restart. It is
 a no-op when Herdr is not installed.
 
-Coding agents are configured per theme with `claude=` and `grok=`:
+Coding agents are configured per theme with `claude=`, `grok=` and `pi=`:
 
 - `claude=custom` installs `~/.config/chameleon/claude/<theme>.json` as the
   Claude Code theme `custom:chameleon`; `claude=light`, `dark` or another
@@ -111,9 +111,19 @@ Coding agents are configured per theme with `claude=` and `grok=`:
   GrokDay or GrokNight; any other built-in name is passed through. Grok has no
   custom colours and reads the theme at startup, so new sessions pick it up.
 
-Both modules keep every other setting, write nothing when the value is already
-set, and are a no-op when the agent is not installed. pi follows the terminal
-colours on its own and needs no module.
+- `pi=light` or `pi=dark` installs `~/.config/chameleon/pi/<profile>.json`
+  as the active user theme `chameleon` in `~/.pi/agent/themes/chameleon.json`
+  and sets `theme` in `~/.pi/agent/settings.json`. The bundled profiles use Pi's
+  light/dark palettes; additional profiles can be added in the same directory.
+  Pi hot-reloads this file, so watcher transitions repaint running sessions
+  without relying on terminal colour notifications or the `system` theme.
+  After the first application, existing sessions need `/reload` and selection of
+  `chameleon` in `/settings`, or one restart. Project-level or CLI theme
+  overrides must also be removed. `PI_CODING_AGENT_DIR` overrides the agent
+  directory (the login watcher must inherit it to target a non-default directory).
+
+These modules keep every other setting, write nothing when already current,
+and are a no-op when the agent is not installed.
 
 The `desktop` component switches the desktop environment between light and
 dark. It is opt-in: a theme sets `desktop=light` or `desktop=dark`, and without
