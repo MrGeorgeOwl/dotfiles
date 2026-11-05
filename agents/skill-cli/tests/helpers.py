@@ -2,18 +2,42 @@
 
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from typing import NamedTuple
 
 SCRIPT = Path(__file__).resolve().parents[1] / "skill-cli"
 HOME_VARS = ("AGENTS_HOME", "CODEX_HOME", "CLAUDE_HOME", "GROK_HOME", "PI_HOME")
-XDG_VARS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME")
-ENV_DROP = HOME_VARS + XDG_VARS + ("SKILL_CLI_ENTRYPOINT",)
+XDG_VARS = ("XDG_CONFIG_HOME", "XDG_CACHE_HOME")
+ENV_DROP = HOME_VARS + XDG_VARS + ("SKILL_CLI_ENTRYPOINT", "XDG_DATA_HOME")
 SKILL_HOMES = (".agents", ".codex", ".claude", ".grok")
+
+
+class GitSkillRepo(NamedTuple):
+    url: str
+    pin: str
+    path: str
+
+
+def load_skill_cli():
+    """Import the skill-cli script as a module for unit-testing helpers."""
+    # Extensionless PEP 723 script — pin SourceFileLoader explicitly.
+    loader = importlib.machinery.SourceFileLoader("skill_cli_under_test", str(SCRIPT))
+    spec = importlib.util.spec_from_file_location(
+        "skill_cli_under_test", SCRIPT, loader=loader,
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def make_git_skill_repo(
@@ -21,14 +45,21 @@ def make_git_skill_repo(
     name: str = "tool",
     body: str = "from-git\n",
     subdir: str | None = None,
-) -> tuple[str, str, str]:
-    """Create a local git repo with a skill; return (url, pin, path)."""
+    *,
+    at_root: bool = False,
+) -> GitSkillRepo:
+    """Create a local git repo with a skill; return url/pin/path."""
     src = root / f"ext-{name}"
-    if src.exists():
-        shutil.rmtree(src)
-    skill_rel = Path(subdir) if subdir else Path(name)
-    skill_dir = src / skill_rel
-    skill_dir.mkdir(parents=True)
+    if at_root:
+        skill_rel = Path(".")
+        skill_dir = src
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        path_field = ""
+    else:
+        skill_rel = Path(subdir) if subdir is not None else Path(name)
+        skill_dir = src / skill_rel
+        skill_dir.mkdir(parents=True)
+        path_field = str(skill_rel)
     (skill_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: External {name}\n---\n{body}"
     )
@@ -46,7 +77,7 @@ def make_git_skill_repo(
     pin = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True,
     ).stdout.strip()
-    return src.resolve().as_uri(), pin, str(skill_rel)
+    return GitSkillRepo(src.resolve().as_uri(), pin, path_field)
 
 
 class SkillCliFixture(unittest.TestCase):
@@ -67,7 +98,6 @@ class SkillCliFixture(unittest.TestCase):
         cache.mkdir()
         self.env["UV_CACHE_DIR"] = str(cache / "uv")
         self.env["XDG_CACHE_HOME"] = str(cache)
-        self.env["XDG_DATA_HOME"] = str(self.root / "data")
         self.env["XDG_CONFIG_HOME"] = str(self.root / "cfg")
 
     def add_skill(self, name: str, description: str = "Test skill") -> Path:
@@ -105,14 +135,19 @@ class SkillCliFixture(unittest.TestCase):
             text += f"  agents: {agents}\n"
         if source is not None:
             text += "  source:\n"
-            text += f'    url: "{source["url"]}"\n'
-            text += f'    pin: "{source["pin"]}"\n'
+            if "url" in source:
+                text += f'    url: "{source["url"]}"\n'
+            if "pin" in source:
+                text += f'    pin: "{source["pin"]}"\n'
             if source.get("path"):
                 text += f'    path: "{source["path"]}"\n'
         return text
 
-    def run_cli(self, *args, check=True):
+    def run_cli(self, *args, check=True, env=None):
         return subprocess.run(
             ["uv", "run", "--script", str(self.script), *args],
-            env=self.env, check=check, capture_output=True, text=True,
+            env=env if env is not None else self.env,
+            check=check,
+            capture_output=True,
+            text=True,
         )

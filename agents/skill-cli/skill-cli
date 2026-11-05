@@ -118,6 +118,30 @@ def warn(msg: str) -> None:
     print(f"{PROG}: warning: {msg}", file=sys.stderr)
 
 
+def validate_name(name: str) -> str:
+    if not NAME_RE.match(name) or len(name) > 64:
+        die(f"skill name must be lowercase-hyphen, <= 64 chars: {name!r}")
+    return name
+
+
+def skill_path_for(paths: Paths, name: str) -> Path:
+    """Return skills_dir/name after validating name; die if it escapes skills_dir."""
+    validate_name(name)
+    root = paths.skills_dir.resolve()
+    skill_dir = (paths.skills_dir / name).resolve()
+    if skill_dir != root and root not in skill_dir.parents:
+        die(f"skill path escapes {paths.skills_dir}: {name!r}")
+    return paths.skills_dir / name
+
+
+def pin_problem(pin: object) -> str | None:
+    if not pin:
+        return "source.pin missing"
+    if not SHA_RE.match(str(pin)):
+        return "source.pin must be a 40-char commit SHA"
+    return None
+
+
 def format_config_example(path_hint: str) -> str:
     return (
         f"Create {resolve_config_dir() / 'config.toml'} with:\n"
@@ -291,8 +315,8 @@ def render_registry(paths: Paths, old: dict[str, dict] | None = None) -> str:
     for name, fields in sorted(old.items()):
         if name in emitted:
             continue
-        src = read_source(fields)
-        if not src:
+        src = fields.get("source")
+        if not isinstance(src, dict):
             continue
         desc = fields.get("description") or ""
         cached = peek_external_skill_dir(name, src)
@@ -338,16 +362,31 @@ def find_registry_errors(paths: Paths) -> list[str]:
             continue
         if not src.get("url"):
             errors.append(f"{name}: source.url missing")
-        pin = src.get("pin") or ""
-        if not pin:
-            errors.append(f"{name}: source.pin missing")
-        elif not SHA_RE.match(str(pin)):
-            errors.append(f"{name}: source.pin must be a 40-char commit SHA")
+        else:
+            try:
+                parse_git_url(str(src["url"]))
+            except FetchError as exc:
+                errors.append(f"{name}: {exc}")
+        problem = pin_problem(src.get("pin"))
+        if problem:
+            errors.append(f"{name}: {problem}")
     for name, skill in repo.items():
         if name not in registry and (skill / "SKILL.md").is_file():
             errors.append(f"{name}: missing from {paths.registry.name}; run {PROG} registry")
-    if not paths.registry.is_file() or paths.registry.read_text() != render_registry(paths, registry):
-        errors.append(f"{paths.registry.name} is out of date; run {PROG} registry")
+    stale = (
+        not paths.registry.is_file()
+        or paths.registry.read_text() != render_registry(paths, registry)
+    )
+    if stale:
+        # Incomplete source blocks make render rewrite url/pin lines; report those
+        # alone so check does not also say "out of date" and push a destructive registry.
+        source_issue = any(
+            "source.url" in e or "source.pin" in e or "source must be" in e
+            or "unrecognized git url" in e
+            for e in errors
+        )
+        if not source_issue:
+            errors.append(f"{paths.registry.name} is out of date; run {PROG} registry")
     return errors
 
 
@@ -372,7 +411,7 @@ def cmd_check(paths: Paths, _args: argparse.Namespace) -> int:
 # --- external fetch (git + XDG cache) ------------------------------------
 
 def parse_git_url(url: str) -> tuple[str, str]:
-    """Return (host, owner/repo) for cache layout."""
+    """Return (host, owner/repo) for cache layout. Raises FetchError if unrecognized."""
     raw = url.strip().rstrip("/")
     if raw.endswith(".git"):
         raw = raw[:-4]
@@ -380,17 +419,17 @@ def parse_git_url(url: str) -> tuple[str, str]:
         _, rest = raw.split("@", 1)
         host, _, path = rest.partition(":")
         if not host or not path:
-            die(f"unrecognized git url: {url}")
+            raise FetchError(f"unrecognized git url: {url}")
         return host, path
     if raw.startswith("file:"):
         path = raw[5:]
         if path.startswith("//"):
             path = path[2:]
         return "file", path.lstrip("/") or "repo"
-    match = re.match(r"^https?://([^/]+)/(.+)$", raw)
+    match = re.match(r"^(?:https?|ssh)://(?:[^@/]+@)?([^/]+)/(.+)$", raw)
     if match:
         return match.group(1), match.group(2)
-    die(f"unrecognized git url: {url}")
+    raise FetchError(f"unrecognized git url: {url}")
 
 
 def resolve_cache_dir(url: str, pin: str) -> Path:
@@ -469,31 +508,24 @@ def peek_external_skill_dir(name: str, source: dict) -> Path | None:
     pin = source.get("pin") or ""
     if not url or not pin:
         return None
-    dest = resolve_cache_dir(url, pin)
+    try:
+        dest = resolve_cache_dir(url, pin)
+    except FetchError:
+        return None
     marker = dest / ".skill-cli-pin"
     if not marker.is_file() or marker.read_text().strip() != pin:
         return None
     return resolve_skill_subdir(dest, name, source.get("path") or "")
 
 
-def resolve_external_skill_dir(name: str, source: dict, *, fetch: bool) -> Path:
-    """Resolve the directory that contains SKILL.md for an external skill."""
+def resolve_external_skill_dir(name: str, source: dict) -> Path:
+    """Fetch and resolve the directory that contains SKILL.md for an external skill."""
     if not source.get("url"):
         raise FetchError(f"{name}: source.url missing")
-    if not source.get("pin"):
-        raise FetchError(f"{name}: source.pin missing")
-    if not SHA_RE.match(str(source["pin"])):
-        raise FetchError(f"{name}: source.pin must be a 40-char commit SHA")
-    if fetch:
-        root = ensure_fetched(source["url"], source["pin"])
-    else:
-        root = resolve_cache_dir(source["url"], source["pin"])
-        marker = root / ".skill-cli-pin"
-        if not marker.is_file() or marker.read_text().strip() != source["pin"]:
-            raise FetchError(
-                f"{name}: not in cache; run sync (or add) to fetch "
-                f"{source['url']}@{source['pin']}"
-            )
+    problem = pin_problem(source.get("pin"))
+    if problem:
+        raise FetchError(f"{name}: {problem}")
+    root = ensure_fetched(source["url"], source["pin"])
     found = resolve_skill_subdir(root, name, source.get("path") or "")
     if found is None:
         where = f" path={source.get('path')}" if source.get("path") else ""
@@ -517,16 +549,15 @@ Describe what this skill does.
 
 def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
     registry = read_registry(paths)
-    name = args.name
-    if not NAME_RE.match(name) or len(name) > 64:
-        die(f"skill name must be lowercase-hyphen, <= 64 chars: {name!r}")
+    name = validate_name(args.name)
 
     if args.source:
         if not args.pin:
             die("--pin is required with --source")
-        if not SHA_RE.match(args.pin):
-            die("--pin must be a 40-char commit SHA")
-        skill_dir = paths.skills_dir / name
+        problem = pin_problem(args.pin)
+        if problem:
+            die(f"--pin must be a 40-char commit SHA" if "SHA" in problem else f"--pin: {problem}")
+        skill_dir = skill_path_for(paths, name)
         if skill_dir.exists():
             die(
                 f"{name} has a local folder at {skill_dir}; "
@@ -536,7 +567,7 @@ def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
         if args.path:
             source["path"] = args.path
         try:
-            content = resolve_external_skill_dir(name, source, fetch=True)
+            content = resolve_external_skill_dir(name, source)
         except FetchError as exc:
             die(str(exc))
         desc = read_frontmatter(content / "SKILL.md").get("description", "")
@@ -554,7 +585,7 @@ def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
         die("--pin/--path require --source")
 
     paths.skills_dir.mkdir(parents=True, exist_ok=True)
-    skill_dir = paths.skills_dir / name
+    skill_dir = skill_path_for(paths, name)
     skill_md = skill_dir / "SKILL.md"
     created = False
     if not skill_md.is_file():
@@ -578,8 +609,8 @@ def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
 def cmd_remove(paths: Paths, args: argparse.Namespace) -> int:
     """Delete the skill folder (if local) and registry entry. Never touches local agent dirs."""
     registry = read_registry(paths)
-    name = args.name
-    skill_dir = paths.skills_dir / name
+    name = validate_name(args.name)
+    skill_dir = skill_path_for(paths, name)
     if name not in registry and not skill_dir.exists():
         die(f"{name!r} is not in the registry and has no folder", code=2)
     if skill_dir.exists():
@@ -644,7 +675,7 @@ def resolve_agents(fields: dict) -> tuple[str, ...]:
     bad = [p for p in parts if p not in SYNCED]
     if bad:
         die(f"unknown agents {bad}; expected subset of {list(SYNCED)}")
-    return tuple(parts) if parts else SYNCED
+    return tuple(parts)
 
 
 def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
@@ -670,18 +701,11 @@ def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
     log(f"grok:   {grok_home}")
     log(f"pi:     {pi_home}")
 
-    skill_dests = {
-        "agents": agents_home / "skills",
-        "codex": codex_home / "skills",
-        "claude": claude_home / "skills",
-        "grok": grok_home / "skills",
-    }
+    skill_dests = {label: list_skill_roots()[label] for label in SYNCED}
 
     for skill in repo_skills:
         fields = registry.get(skill.name, {})
         for label in resolve_agents(fields):
-            if label not in skill_dests:
-                continue
             copy_dir_contents(skill, skill_dests[label] / skill.name, dry_run, skip="evals")
 
     failed_externals: list[str] = []
@@ -699,14 +723,12 @@ def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
                     )
                     continue
             else:
-                content = resolve_external_skill_dir(name, src, fetch=True)
+                content = resolve_external_skill_dir(name, src)
         except FetchError as exc:
             warn(str(exc))
             failed_externals.append(name)
             continue
         for label in resolve_agents(fields):
-            if label not in skill_dests:
-                continue
             copy_dir_contents(content, skill_dests[label] / name, dry_run, skip="evals")
 
     prompts = paths.agents_dir / "prompts"
@@ -940,7 +962,8 @@ def build_report(paths: Paths) -> dict:
     ) -> None:
         declared.add(name)
         repo_hash = hash_file(skill_md) if skill_md and skill_md.is_file() else None
-        src = read_source(fields)
+        raw_src = fields.get("source")
+        src = raw_src if isinstance(raw_src, dict) else None
         where = {}
         for label in resolve_agents(fields):
             entries = copies.get(label, {})
@@ -955,7 +978,7 @@ def build_report(paths: Paths) -> dict:
         skills.append({
             "name": name,
             "status": fields.get("status", "unregistered"),
-            "source": src,
+            "source": src if src and src.get("url") else src,
             "problems": problems,
             "hash": repo_hash,
             "copies": where,
@@ -977,16 +1000,21 @@ def build_report(paths: Paths) -> dict:
     for name, fields in sorted(registry.items()):
         if name in declared:
             continue
-        src = read_source(fields)
-        if not src:
+        src = fields.get("source")
+        if not isinstance(src, dict):
             continue
         cached = peek_external_skill_dir(name, src)
         problems: list[str] = []
-        pin = src.get("pin") or ""
-        if not pin:
-            problems.append("source.pin missing")
-        elif not SHA_RE.match(str(pin)):
-            problems.append("source.pin must be a 40-char commit SHA")
+        if not src.get("url"):
+            problems.append("source.url missing")
+        else:
+            try:
+                parse_git_url(str(src["url"]))
+            except FetchError as exc:
+                problems.append(str(exc))
+        problem = pin_problem(src.get("pin"))
+        if problem:
+            problems.append(problem)
         append_skill(
             name,
             (cached / "SKILL.md") if cached else None,
@@ -1073,15 +1101,17 @@ def cmd_status(paths: Paths, args: argparse.Namespace) -> int:
 # --- eval -----------------------------------------------------------------
 
 def cmd_eval(paths: Paths, args: argparse.Namespace) -> int:
-    evals = paths.skills_dir / args.name / "evals"
+    name = validate_name(args.name)
+    skill_dir = skill_path_for(paths, name)
+    evals = skill_dir / "evals"
     runner = evals / "run"
-    if not (paths.skills_dir / args.name / "SKILL.md").is_file():
-        print(f"{PROG}: no skill named {args.name!r}", file=sys.stderr)
+    if not (skill_dir / "SKILL.md").is_file():
+        print(f"{PROG}: no skill named {name!r}", file=sys.stderr)
         return 2
     if not os.access(runner, os.X_OK):
         print(f"{PROG}: {runner} is missing or not executable", file=sys.stderr)
         return 2
-    env = dict(os.environ, SKILL_DIR=str(paths.skills_dir / args.name))
+    env = dict(os.environ, SKILL_DIR=str(skill_dir))
     return subprocess.run([str(runner), *args.rest], cwd=evals, env=env).returncode
 
 

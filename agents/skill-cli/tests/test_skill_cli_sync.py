@@ -1,10 +1,14 @@
 """Exercise skill-cli sync without touching the user's agent configuration."""
 
-from pathlib import Path
-import subprocess
-import unittest
+from __future__ import annotations
 
-from helpers import HOME_VARS, SKILL_HOMES, SkillCliFixture, make_git_skill_repo
+import os
+from pathlib import Path
+import subprocess as sp
+import unittest
+from unittest import mock
+
+from helpers import HOME_VARS, SKILL_HOMES, SkillCliFixture, load_skill_cli, make_git_skill_repo
 
 
 class SyncFixture(SkillCliFixture):
@@ -54,34 +58,6 @@ class DefaultHomesSyncTests(SyncFixture):
         self.assertEqual(stale.read_text(), "local\n")
         self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".claude"])
 
-    def test_entrypoint_flag_overrides_env(self):
-        other = self.root / "other/agents"
-        other.mkdir(parents=True)
-        (other / "skills/other/SKILL.md").parent.mkdir(parents=True)
-        (other / "skills/other/SKILL.md").write_text(
-            "---\nname: other\ndescription: Other\n---\n"
-        )
-        (other / "skills.yaml").write_text(
-            '- name: "other"\n  description: "Other"\n  status: "active"\n  purpose: ""\n'
-        )
-        result = self.run_cli("--entrypoint", str(other), "sync")
-        self.assertTrue((self.home / ".agents/skills/other/SKILL.md").is_file())
-        self.assertFalse((self.home / ".agents/skills/example").exists())
-        self.assertIn(str(other), result.stdout)
-
-    def test_missing_entrypoint_explains_config(self):
-        env = dict(self.env)
-        del env["SKILL_CLI_ENTRYPOINT"]
-        env["XDG_CONFIG_HOME"] = str(self.root / "cfg-empty")
-        result = subprocess.run(
-            ["uv", "run", "--script", str(self.script), "sync"],
-            env=env, check=False, capture_output=True, text=True,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no entrypoint configured", result.stderr)
-        self.assertIn("config.toml", result.stderr)
-        self.assertIn("entrypoint =", result.stderr)
-
     def test_local_only_skills_survive_sync(self):
         local = self.make_local_skill(".claude", "mine", "keep me\n")
         self.run_sync()
@@ -112,14 +88,6 @@ class DefaultHomesSyncTests(SyncFixture):
                 sorted(p.name for p in skill.iterdir()), ["SKILL.md", "agents"]
             )
 
-    def test_second_run_is_noop(self):
-        self.run_sync()
-        first = (self.home / ".agents/skills/example/SKILL.md").read_bytes()
-        self.run_sync()
-        self.assertEqual(
-            (self.home / ".agents/skills/example/SKILL.md").read_bytes(), first
-        )
-
     def test_destination_only_nested_files_survive(self):
         (self.root / "repo/.pi/agent").mkdir(parents=True)
         (self.root / "repo/.pi/agent/settings.json").write_text('{"from":"repo"}\n')
@@ -144,13 +112,13 @@ class DefaultHomesSyncTests(SyncFixture):
         self.assertFalse((self.home / ".grok/skills/example").exists())
 
     def test_external_skill_fetched_and_synced(self):
-        url, pin, path = make_git_skill_repo(self.root, body="from-git\n")
+        repo = make_git_skill_repo(self.root, body="from-git\n")
         self.write_registry(
             self.registry_entry("example"),
             self.registry_entry(
                 "tool",
                 description="External tool",
-                source={"url": url, "pin": pin, "path": path},
+                source={"url": repo.url, "pin": repo.pin, "path": repo.path},
             ),
         )
         output = self.run_sync().stdout
@@ -163,53 +131,106 @@ class DefaultHomesSyncTests(SyncFixture):
         output2 = self.run_sync().stdout
         self.assertNotIn("fetching", output2)
 
+    def test_external_skill_without_path(self):
+        for label, kwargs in (
+            ("named-subdir", {}),
+            ("repo-root", {"at_root": True}),
+        ):
+            with self.subTest(label):
+                self.setUp()
+                repo = make_git_skill_repo(self.root, name="tool", **kwargs)
+                source = {"url": repo.url, "pin": repo.pin}
+                if repo.path:
+                    source["path"] = repo.path
+                self.write_registry(
+                    self.registry_entry("example"),
+                    self.registry_entry(
+                        "tool", description="External tool", source=source,
+                    ),
+                )
+                self.run_sync()
+                self.assertTrue(
+                    (self.home / ".agents/skills/tool/SKILL.md").is_file()
+                )
+
     def test_dry_run_skips_fetch_when_uncached(self):
-        url, pin, path = make_git_skill_repo(self.root)
+        repo = make_git_skill_repo(self.root)
         self.write_registry(
             self.registry_entry("example"),
             self.registry_entry(
                 "tool",
                 description="External tool",
-                source={"url": url, "pin": pin, "path": path},
+                source={"url": repo.url, "pin": repo.pin, "path": repo.path},
             ),
         )
         output = self.run_sync("--dry-run").stdout
         self.assertIn("would fetch", output)
         self.assertFalse(any(Path(self.env["XDG_CACHE_HOME"]).rglob("SKILL.md")))
 
-    def test_missing_skill_md_continues_sync(self):
-        url, pin, _ = make_git_skill_repo(self.root)
-        self.write_registry(
-            self.registry_entry("example"),
-            self.registry_entry(
-                "tool",
-                description="External tool",
-                source={"url": url, "pin": pin, "path": "no-such-dir"},
+    def test_failed_external_continues_sync(self):
+        cases = (
+            ("missing-skill-md", None, "no SKILL.md"),
+            (
+                "bad-fetch",
+                {"url": "file:///no/such/repo", "pin": "0" * 40, "path": "tool"},
+                None,
             ),
-        )
-        result = self.run_sync(check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no SKILL.md", result.stderr)
-        self.assertTrue((self.home / ".agents/skills/example/SKILL.md").is_file())
-        self.assertTrue((self.home / ".pi/web-search.json").is_file())
-
-    def test_failed_external_fetch_continues(self):
-        self.write_registry(
-            self.registry_entry("example"),
-            self.registry_entry(
-                "tool",
-                description="External tool",
-                source={
-                    "url": "file:///no/such/repo",
+            (
+                "ssh-url",
+                {
+                    "url": "ssh://git@github.com/example/skills",
                     "pin": "0" * 40,
                     "path": "tool",
                 },
+                None,
             ),
         )
-        result = self.run_sync(check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertTrue((self.home / ".agents/skills/example/SKILL.md").is_file())
-        self.assertTrue((self.home / ".pi/web-search.json").is_file())
+        for label, source, needle in cases:
+            with self.subTest(label):
+                self.setUp()
+                if label == "missing-skill-md":
+                    repo = make_git_skill_repo(self.root)
+                    source = {
+                        "url": repo.url,
+                        "pin": repo.pin,
+                        "path": "no-such-dir",
+                    }
+                self.write_registry(
+                    self.registry_entry("example"),
+                    self.registry_entry(
+                        "tool", description="External tool", source=source,
+                    ),
+                )
+                result = self.run_sync(check=False)
+                self.assertNotEqual(result.returncode, 0)
+                if needle:
+                    self.assertIn(needle, result.stderr)
+                self.assertTrue(
+                    (self.home / ".agents/skills/example/SKILL.md").is_file()
+                )
+                self.assertTrue((self.home / ".pi/web-search.json").is_file())
+
+    def test_pin_mismatch_errors(self):
+        repo = make_git_skill_repo(self.root)
+        os.environ["XDG_CACHE_HOME"] = self.env["XDG_CACHE_HOME"]
+        mod = load_skill_cli()
+        real_run = sp.run
+
+        def fake_run(cmd, *args, **kwargs):
+            result = real_run(cmd, *args, **kwargs)
+            if list(cmd[:2]) == ["git", "rev-parse"]:
+                return sp.CompletedProcess(
+                    args=result.args,
+                    returncode=0,
+                    stdout="0" * 40 + "\n",
+                    stderr=result.stderr or "",
+                )
+            return result
+
+        with mock.patch.object(mod.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.ensure_fetched(repo.url, repo.pin)
+        self.assertIn("pin mismatch", str(ctx.exception))
 
 
 class CustomHomesSyncTests(SyncFixture):

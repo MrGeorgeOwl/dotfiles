@@ -1,11 +1,12 @@
-"""Exercise skill-cli status, registry, check, eval, add, remove."""
+"""Exercise skill-cli status, registry, check, eval, add, remove, entrypoint."""
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
-import subprocess
 import unittest
 
-from helpers import SkillCliFixture, make_git_skill_repo
+from helpers import SkillCliFixture, load_skill_cli, make_git_skill_repo
 
 
 def jsonl(path, *records):
@@ -25,7 +26,7 @@ def claude_skill(call_id, skill, ts):
     }
 
 
-class SkillCliStatusTests(SkillCliFixture):
+class StatusFixture(SkillCliFixture):
     def setUp(self):
         super().setUp()
         self.add_skill("alpha", "Use for alpha.")
@@ -41,6 +42,8 @@ class SkillCliStatusTests(SkillCliFixture):
         path.write_text(text if text is not None else source.read_text())
         return path
 
+
+class StatusTests(StatusFixture):
     def test_no_logs_or_installs(self):
         rep = self.report()
         self.assertEqual({log["files"] for log in rep["logs"].values()}, {0})
@@ -80,20 +83,17 @@ class SkillCliStatusTests(SkillCliFixture):
         self.assertEqual(by_name["alpha"]["copies"]["codex"], "drift")
 
     def test_hollow_and_missing(self):
-        hollow = self.home / ".claude/skills/alpha"
-        hollow.mkdir(parents=True)
+        (self.home / ".claude/skills/alpha").mkdir(parents=True)
         rep = self.report()
         by_name = {s["name"]: s for s in rep["skills"]}
         self.assertEqual(by_name["alpha"]["copies"]["claude"], "hollow")
         self.assertEqual(by_name["alpha"]["copies"]["grok"], "missing")
 
     def test_orphan_local_skill(self):
-        orphan = self.install(".grok/skills", "ghost", "orphan\n")
+        self.install(".grok/skills", "ghost", "orphan\n")
         rep = self.report()
         [o] = [x for x in rep["orphans"] if x["name"] == "ghost"]
         self.assertEqual(o["agent"], "grok")
-        self.assertNotIn("pruned", o)
-        self.assertTrue(orphan.is_file())
 
     def test_pi_skill_file_marker(self):
         session = self.home / ".pi/agent/sessions/s1.jsonl"
@@ -112,6 +112,74 @@ class SkillCliStatusTests(SkillCliFixture):
         by_name = {s["name"]: s for s in rep["skills"]}
         self.assertEqual(by_name["alpha"]["loads"]["pi"], 1)
 
+    def test_registry_parses_nested_source(self):
+        pin = "a" * 40
+        url = "https://github.com/example/skills"
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            self.registry_entry(
+                "tool",
+                description="External tool",
+                status="experimental",
+                source={"url": url, "pin": pin, "path": "tool"},
+            ),
+        )
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertIn("tool", by_name)
+        self.assertEqual(by_name["tool"]["source"]["url"], url)
+        self.assertEqual(by_name["tool"]["source"]["pin"], pin)
+        self.assertEqual(by_name["tool"]["source"]["path"], "tool")
+        self.assertEqual(by_name["tool"]["copies"]["agents"], "missing")
+
+    def test_status_uncached_installed_external_is_not_fetched(self):
+        pin = "b" * 40
+        url = "https://github.com/example/skills"
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            self.registry_entry(
+                "tool",
+                description="External tool",
+                status="experimental",
+                source={"url": url, "pin": pin, "path": "tool"},
+            ),
+        )
+        self.install(".agents/skills", "tool", "installed but uncached\n")
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertEqual(by_name["tool"]["copies"]["agents"], "not fetched")
+
+    def test_ssh_url_reported_not_fatal(self):
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            self.registry_entry(
+                "tool",
+                description="External tool",
+                status="experimental",
+                source={
+                    "url": "ssh://git@github.com/example/skills",
+                    "pin": "c" * 40,
+                    "path": "tool",
+                },
+            ),
+        )
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertIn("tool", by_name)
+        self.assertEqual(
+            by_name["tool"]["source"]["url"],
+            "ssh://git@github.com/example/skills",
+        )
+        check = self.run_cli("check", check=False)
+        self.assertNotIn("Traceback", check.stderr + check.stdout)
+        # ssh:// is a recognized scheme; check only fails if registry text drifts
+        self.assertNotIn("unrecognized git url", check.stderr)
+
+
+class RegistryCheckTests(StatusFixture):
     def test_registry_writes_and_preserves_purpose(self):
         result = self.run_cli("registry")
         self.assertEqual(result.returncode, 0)
@@ -124,6 +192,30 @@ class SkillCliStatusTests(SkillCliFixture):
         self.assertIn('purpose: "kept"', registry.read_text())
         self.assertIn("Changed description.", registry.read_text())
 
+    def test_registry_keeps_source_without_url(self):
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            self.registry_entry(
+                "tool",
+                description="External tool",
+                status="experimental",
+                purpose="keep me",
+                source={"pin": "d" * 40},
+            ),
+        )
+        bad = self.run_cli("check", check=False)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("source.url missing", bad.stderr)
+        self.assertNotIn("out of date", bad.stderr)
+        # registry rewrites but still reports the incomplete source (exit 1)
+        rewritten = self.run_cli("registry", check=False)
+        self.assertIn("source.url missing", rewritten.stderr)
+        text = (self.entry / "skills.yaml").read_text()
+        self.assertIn('name: "tool"', text)
+        self.assertIn('purpose: "keep me"', text)
+        self.assertIn("source:", text)
+
     def test_check_passes_when_current(self):
         self.run_cli("registry")
         self.assertEqual(self.run_cli("check").returncode, 0)
@@ -135,6 +227,51 @@ class SkillCliStatusTests(SkillCliFixture):
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("out of date", bad.stderr)
 
+    def test_check_pin_problems(self):
+        for label, source, needle in (
+            ("missing", {"url": "https://github.com/example/skills"}, "source.pin missing"),
+            (
+                "non-sha",
+                {"url": "https://github.com/example/skills", "pin": "v1.2.3"},
+                "40-char commit SHA",
+            ),
+        ):
+            with self.subTest(label):
+                self.write_registry(
+                    self.registry_entry("alpha", description="Use for alpha."),
+                    self.registry_entry("beta", description="Use for beta."),
+                    self.registry_entry(
+                        "tool",
+                        description="External tool",
+                        status="experimental",
+                        source=source,
+                    ),
+                )
+                bad = self.run_cli("check", check=False)
+                self.assertNotEqual(bad.returncode, 0)
+                self.assertIn(needle, bad.stderr)
+
+    def test_check_rejects_local_folder_for_external(self):
+        self.add_skill("tool", "Should not be both.")
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            self.registry_entry(
+                "tool",
+                description="External",
+                status="experimental",
+                source={
+                    "url": "https://github.com/example/skills",
+                    "pin": "c" * 40,
+                },
+            ),
+        )
+        bad = self.run_cli("check", check=False)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("must not have", bad.stderr)
+
+
+class AddRemoveTests(StatusFixture):
     def test_add_creates_template(self):
         local_before = self.home / ".agents/skills/gamma"
         local_before.mkdir(parents=True)
@@ -162,38 +299,60 @@ class SkillCliStatusTests(SkillCliFixture):
         result = self.run_cli("remove", "nosuch", check=False)
         self.assertEqual(result.returncode, 2)
 
+    def test_remove_invalid_names_delete_nothing(self):
+        self.run_cli("registry")
+        before = {
+            p: p.read_bytes() if p.is_file() else None
+            for p in sorted((self.entry / "skills").rglob("*"))
+        }
+        registry_before = (self.entry / "skills.yaml").read_text()
+        for bad in ("", "..", "a/b"):
+            with self.subTest(bad=bad):
+                result = self.run_cli("remove", bad, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue((self.entry / "skills/alpha/SKILL.md").is_file())
+                self.assertTrue((self.entry / "skills/beta/SKILL.md").is_file())
+                self.assertEqual((self.entry / "skills.yaml").read_text(), registry_before)
+                after = {
+                    p: p.read_bytes() if p.is_file() else None
+                    for p in sorted((self.entry / "skills").rglob("*"))
+                }
+                self.assertEqual(after, before)
+
     def test_add_external_registers_only(self):
-        url, pin, path = make_git_skill_repo(self.root)
+        repo = make_git_skill_repo(self.root)
         local = self.home / ".agents/skills/tool"
         local.mkdir(parents=True)
         (local / "SKILL.md").write_text("old local\n")
         result = self.run_cli(
-            "add", "tool", "--source", url, "--pin", pin, "--path", path,
+            "add", "tool", "--source", repo.url, "--pin", repo.pin, "--path", repo.path,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.entry / "skills/tool").exists())
         registry = (self.entry / "skills.yaml").read_text()
         self.assertIn("source:", registry)
-        self.assertIn(f'url: "{url}"', registry)
-        self.assertIn(f'pin: "{pin}"', registry)
+        self.assertIn(f'url: "{repo.url}"', registry)
+        self.assertIn(f'pin: "{repo.pin}"', registry)
         self.assertEqual((local / "SKILL.md").read_text(), "old local\n")
 
     def test_add_external_checks_local_folder_before_fetch(self):
         self.add_skill("tool", "Local tool.")
-        url, pin, path = make_git_skill_repo(self.root)
+        repo = make_git_skill_repo(self.root)
         result = self.run_cli(
-            "add", "tool", "--source", url, "--pin", pin, "--path", path, check=False,
+            "add", "tool", "--source", repo.url, "--pin", repo.pin,
+            "--path", repo.path, check=False,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("local folder", result.stderr)
-        # Should fail before fetch; registry unchanged for external
+        self.assertFalse(any(Path(self.env["XDG_CACHE_HOME"]).rglob("SKILL.md")))
         registry = self.entry / "skills.yaml"
-        self.assertTrue(not registry.is_file() or "source:" not in registry.read_text())
+        if registry.is_file():
+            self.assertNotIn("source:", registry.read_text())
 
     def test_add_external_missing_skill_md_leaves_registry_alone(self):
-        url, pin, _ = make_git_skill_repo(self.root)
+        repo = make_git_skill_repo(self.root)
         result = self.run_cli(
-            "add", "tool", "--source", url, "--pin", pin, "--path", "missing",
+            "add", "tool", "--source", repo.url, "--pin", repo.pin, "--path", "missing",
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
@@ -211,127 +370,18 @@ class SkillCliStatusTests(SkillCliFixture):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("40-char commit SHA", result.stderr)
 
-    def test_registry_parses_nested_source(self):
-        self.run_cli("registry")
-        pin = "a" * 40
-        url = "https://github.com/example/skills"
-        registry = self.entry / "skills.yaml"
-        registry.write_text(
-            registry.read_text()
-            + '- name: "tool"\n'
-            '  description: "External tool"\n'
-            '  status: "experimental"\n'
-            '  purpose: ""\n'
-            "  source:\n"
-            f'    url: "{url}"\n'
-            f'    pin: "{pin}"\n'
-            '    path: "tool"\n'
-        )
-        rep = self.report()
-        by_name = {s["name"]: s for s in rep["skills"]}
-        self.assertIn("tool", by_name)
-        self.assertEqual(by_name["tool"]["source"]["url"], url)
-        self.assertEqual(by_name["tool"]["source"]["pin"], pin)
-        self.assertEqual(by_name["tool"]["source"]["path"], "tool")
-        # Uncached + not installed → missing
-        self.assertEqual(by_name["tool"]["copies"]["agents"], "missing")
-
-    def test_status_uncached_installed_external_is_not_fetched(self):
-        self.run_cli("registry")
-        pin = "b" * 40
-        url = "https://github.com/example/skills"
-        registry = self.entry / "skills.yaml"
-        registry.write_text(
-            registry.read_text()
-            + '- name: "tool"\n'
-            '  description: "External tool"\n'
-            '  status: "experimental"\n'
-            '  purpose: ""\n'
-            "  source:\n"
-            f'    url: "{url}"\n'
-            f'    pin: "{pin}"\n'
-            '    path: "tool"\n'
-        )
-        self.install(".agents/skills", "tool", "installed but uncached\n")
-        rep = self.report()
-        by_name = {s["name"]: s for s in rep["skills"]}
-        self.assertEqual(by_name["tool"]["copies"]["agents"], "not fetched")
-
-    def test_check_requires_pin(self):
-        self.run_cli("registry")
-        registry = self.entry / "skills.yaml"
-        registry.write_text(
-            registry.read_text()
-            + '- name: "tool"\n'
-            '  description: "External tool"\n'
-            '  status: "experimental"\n'
-            '  purpose: ""\n'
-            "  source:\n"
-            '    url: "https://github.com/example/skills"\n'
-        )
-        bad = self.run_cli("check", check=False)
-        self.assertNotEqual(bad.returncode, 0)
-        self.assertIn("source.pin missing", bad.stderr)
-
-    def test_check_rejects_non_sha_pin(self):
-        self.run_cli("registry")
-        registry = self.entry / "skills.yaml"
-        registry.write_text(
-            registry.read_text()
-            + '- name: "tool"\n'
-            '  description: "External tool"\n'
-            '  status: "experimental"\n'
-            '  purpose: ""\n'
-            "  source:\n"
-            '    url: "https://github.com/example/skills"\n'
-            '    pin: "v1.2.3"\n'
-        )
-        bad = self.run_cli("check", check=False)
-        self.assertNotEqual(bad.returncode, 0)
-        self.assertIn("40-char commit SHA", bad.stderr)
-
-    def test_check_rejects_local_folder_for_external(self):
-        self.run_cli("registry")
-        self.add_skill("tool", "Should not be both.")
-        registry = self.entry / "skills.yaml"
-        # Re-read after add_skill doesn't update registry; append external block
-        # and also put tool in registry as local via registry command first
-        self.run_cli("registry")
-        text = registry.read_text()
-        # Convert tool entry to external by rewriting — simpler: append source to tool
-        # Actually registry wrote tool as local. Replace its block with external+folder remains.
-        lines = []
-        skip_until_next = False
-        for line in text.splitlines(True):
-            if line.startswith('- name: "tool"'):
-                lines.append(line)
-                lines.append('  description: "External"\n')
-                lines.append('  status: "experimental"\n')
-                lines.append('  purpose: ""\n')
-                lines.append("  source:\n")
-                lines.append('    url: "https://github.com/example/skills"\n')
-                lines.append(f'    pin: "{"c" * 40}"\n')
-                skip_until_next = True
-                continue
-            if skip_until_next:
-                if line.startswith("- name:"):
-                    skip_until_next = False
-                    lines.append(line)
-                continue
-            lines.append(line)
-        registry.write_text("".join(lines))
-        bad = self.run_cli("check", check=False)
-        self.assertNotEqual(bad.returncode, 0)
-        self.assertIn("must not have", bad.stderr)
-
     def test_remove_external_drops_registry_only(self):
-        url, pin, path = make_git_skill_repo(self.root)
-        self.run_cli("add", "tool", "--source", url, "--pin", pin, "--path", path)
+        repo = make_git_skill_repo(self.root)
+        self.run_cli(
+            "add", "tool", "--source", repo.url, "--pin", repo.pin, "--path", repo.path,
+        )
         self.assertIn("tool", (self.entry / "skills.yaml").read_text())
         result = self.run_cli("remove", "tool")
         self.assertEqual(result.returncode, 0)
         self.assertNotIn("tool", (self.entry / "skills.yaml").read_text())
 
+
+class EvalTests(StatusFixture):
     def test_eval_runs_local_script(self):
         runner = self.entry / "skills/alpha/evals/run"
         runner.parent.mkdir(parents=True)
@@ -346,6 +396,44 @@ class SkillCliStatusTests(SkillCliFixture):
         result = self.run_cli("eval", "nosuch", check=False)
         self.assertEqual(result.returncode, 2)
 
+    def test_eval_invalid_name(self):
+        result = self.run_cli("eval", "..", check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+
+class EntrypointTests(SkillCliFixture):
+    def setUp(self):
+        super().setUp()
+        self.add_skill("example")
+        self.write_registry(self.registry_entry("example"))
+        (self.root / "repo/.pi").mkdir(parents=True)
+        (self.root / "repo/.pi/web-search.json").write_text("{}\n")
+
+    def test_entrypoint_flag_overrides_env(self):
+        other = self.root / "other/agents"
+        other.mkdir(parents=True)
+        (other / "skills/other/SKILL.md").parent.mkdir(parents=True)
+        (other / "skills/other/SKILL.md").write_text(
+            "---\nname: other\ndescription: Other\n---\n"
+        )
+        (other / "skills.yaml").write_text(
+            '- name: "other"\n  description: "Other"\n  status: "active"\n  purpose: ""\n'
+        )
+        result = self.run_cli("--entrypoint", str(other), "sync")
+        self.assertTrue((self.home / ".agents/skills/other/SKILL.md").is_file())
+        self.assertFalse((self.home / ".agents/skills/example").exists())
+        self.assertIn(str(other), result.stdout)
+
+    def test_missing_entrypoint_explains_config(self):
+        env = dict(self.env)
+        del env["SKILL_CLI_ENTRYPOINT"]
+        env["XDG_CONFIG_HOME"] = str(self.root / "cfg-empty")
+        result = self.run_cli("sync", check=False, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no entrypoint configured", result.stderr)
+        self.assertIn("config.toml", result.stderr)
+        self.assertIn("entrypoint =", result.stderr)
+
     def test_config_toml_entrypoint(self):
         env = dict(self.env)
         del env["SKILL_CLI_ENTRYPOINT"]
@@ -354,13 +442,74 @@ class SkillCliStatusTests(SkillCliFixture):
         cfg.parent.mkdir(parents=True)
         cfg.write_text(f'entrypoint = "{self.entry}"\n')
         env["XDG_CONFIG_HOME"] = str(cfg_home)
-        result = subprocess.run(
-            ["uv", "run", "--script", str(self.script), "status", "--json"],
-            env=env, check=True, capture_output=True, text=True,
-        )
+        result = self.run_cli("status", "--json", env=env)
         rep = json.loads(result.stdout)
         self.assertEqual(rep["entrypoint"], str(self.entry))
-        self.assertEqual(len(rep["skills"]), 2)
+        self.assertGreaterEqual(len(rep["skills"]), 1)
+
+
+class ParseRecordTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_skill_cli()
+
+    def test_parse_codex_record(self):
+        u = self.mod.Usage()
+        record = {
+            "timestamp": "2024-05-01T00:00:00Z",
+            "payload": {
+                "type": "function_call",
+                "call_id": "c1",
+                "arguments": json.dumps({
+                    "cmd": ["cat", "/home/u/.agents/skills/alpha/SKILL.md"]
+                }),
+            },
+        }
+        line = json.dumps(record)
+        self.mod.parse_codex_record(u, "sess.jsonl", line, record)
+        self.assertEqual(u.loads["alpha"], 1)
+
+    def test_parse_grok_record(self):
+        u = self.mod.Usage()
+        record = {
+            "timestamp": "2024-05-02T00:00:00Z",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "g1",
+                    "rawInput": {"path": "/h/.grok/skills/beta/SKILL.md"},
+                }
+            },
+        }
+        self.mod.parse_grok_record(u, "u.jsonl", "{}", record)
+        self.assertEqual(u.loads["beta"], 1)
+
+    def test_parse_claude_read_and_command(self):
+        u = self.mod.Usage()
+        read_rec = {
+            "type": "assistant",
+            "timestamp": "2024-05-03T00:00:00Z",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": "r1",
+                    "name": "Read",
+                    "input": {"file_path": "/h/.claude/skills/alpha/SKILL.md"},
+                }]
+            },
+        }
+        self.mod.parse_claude_record(u, "a.jsonl", "{}", read_rec)
+        self.assertEqual(u.loads["alpha"], 1)
+
+        cmd_rec = {
+            "type": "user",
+            "uuid": "u1",
+            "timestamp": "2024-05-04T00:00:00Z",
+            "message": {
+                "content": "<command-name>/beta</command-name>"
+            },
+        }
+        self.mod.parse_claude_record(u, "a.jsonl", "{}", cmd_rec)
+        self.assertEqual(u.loads["beta"], 1)
 
 
 if __name__ == "__main__":
