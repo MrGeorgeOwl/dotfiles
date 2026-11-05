@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import subprocess as sp
 import unittest
 from unittest import mock
 
-from helpers import HOME_VARS, SKILL_HOMES, SkillCliFixture, load_skill_cli, make_git_skill_repo
+from helpers import HOME_VARS, SKILL_HOMES, SkillCliFixture, make_git_skill_repo
 
 
 class SyncFixture(SkillCliFixture):
@@ -215,13 +214,14 @@ class DefaultHomesSyncTests(SyncFixture):
 
     def test_pin_mismatch_errors(self):
         repo = make_git_skill_repo(self.root)
-        mod = load_skill_cli()
-        real_run = sp.run
+        import skill_cli.fetch as fetch_mod
+
+        real_run = fetch_mod.subprocess.run
 
         def fake_run(cmd, *args, **kwargs):
             result = real_run(cmd, *args, **kwargs)
             if list(cmd[:2]) == ["git", "rev-parse"]:
-                return sp.CompletedProcess(
+                return fetch_mod.subprocess.CompletedProcess(
                     args=result.args,
                     returncode=0,
                     stdout="0" * 40 + "\n",
@@ -230,9 +230,9 @@ class DefaultHomesSyncTests(SyncFixture):
             return result
 
         with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": self.env["XDG_CACHE_HOME"]}):
-            with mock.patch.object(mod.subprocess, "run", side_effect=fake_run):
-                with self.assertRaises(mod.FetchError) as ctx:
-                    mod.ensure_fetched(repo.url, repo.pin)
+            with mock.patch.object(fetch_mod.subprocess, "run", side_effect=fake_run):
+                with self.assertRaises(fetch_mod.FetchError) as ctx:
+                    fetch_mod.ensure_fetched(repo.url, repo.pin)
         self.assertIn("pin mismatch", str(ctx.exception))
 
 
