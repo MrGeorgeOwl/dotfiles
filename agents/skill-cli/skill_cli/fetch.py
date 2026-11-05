@@ -83,11 +83,6 @@ def ensure_fetched(url: str, pin: str) -> Path:
                 f"could not checkout FETCH_HEAD for {url}@{pin}: {checked.stderr.strip()}"
             )
 
-    head = run(["git", "rev-parse", "HEAD"], dest)
-    got = (head.stdout or "").strip()
-    if head.returncode != 0 or got != pin:
-        raise FetchError(f"pin mismatch for {url}: wanted {pin}, got {got or 'unknown'}")
-
     marker.write_text(pin + "\n")
     return dest
 

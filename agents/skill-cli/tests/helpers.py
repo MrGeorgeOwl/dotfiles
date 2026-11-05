@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from typing import NamedTuple
@@ -22,14 +21,6 @@ class GitSkillRepo(NamedTuple):
     url: str
     pin: str
     path: str
-
-
-def load_skill_cli():
-    """Import skill_cli.cli for unit-testing helpers."""
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    from skill_cli import cli
-    return cli
 
 
 def make_git_skill_repo(

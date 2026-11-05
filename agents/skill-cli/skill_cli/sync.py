@@ -40,9 +40,9 @@ def copy_dir_contents(
             continue
         target = dest / item.name
         if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
+            shutil.copytree(item, target, symlinks=True, dirs_exist_ok=True)
         else:
-            shutil.copy2(item, target)
+            shutil.copy2(item, target, follow_symlinks=False)
 
 
 def resolve_agents(fields: dict) -> tuple[str, ...]:

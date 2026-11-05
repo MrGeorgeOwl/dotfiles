@@ -125,7 +125,21 @@ def render_registry(paths: Paths, old: dict[str, dict] | None = None) -> str:
         if name in emitted:
             continue
         src = fields.get("source")
+        if src is None or src == "":
+            continue
         if not isinstance(src, dict):
+            # Keep opaque source as-read so `registry` does not silently delete it.
+            lines = [
+                f"- name: {format_yaml_value(name)}",
+                f"  description: {format_yaml_value(fields.get('description') or '')}",
+                f"  status: {format_yaml_value(fields.get('status') or 'experimental')}",
+                f"  purpose: {format_yaml_value(fields.get('purpose') or '')}",
+                f"  source: {format_yaml_value(src)}",
+            ]
+            if fields.get("agents"):
+                lines.append(f"  agents: {format_yaml_value(fields.get('agents'))}")
+            out += lines
+            emitted.add(name)
             continue
         desc = fields.get("description") or ""
         cached = find_cached_skill_dir(name, src)
