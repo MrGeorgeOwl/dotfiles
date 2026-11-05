@@ -16,28 +16,23 @@ Herdr 0.9.5 or newer and `python3` (stdlib only), on macOS or Linux.
 
 ## Install
 
-Copy the plugin out of the repo, then register the copy:
+From a clone of this repo, as the user who runs Herdr:
 
 ```sh
-mkdir -p ~/.config/herdr/plugins
-cp -R ~/code/dotfiles/.config/herdr/plugins/agent-recency ~/.config/herdr/plugins/
-herdr plugin link ~/.config/herdr/plugins/agent-recency
-herdr plugin action invoke agent-recency.apply
+.config/herdr/plugins/agent-recency/install.sh
 ```
 
-`plugin link` only records the path and does not run startup hooks, so the
-last command applies the order once. After that, the plugin reapplies on
-every agent status change and at each server start. No restart is needed.
+The script copies the plugin into
+`${XDG_CONFIG_HOME:-~/.config}/herdr/plugins/agent-recency` (override with
+`HERDR_PLUGIN_DIR`), registers it with `herdr plugin link`, and applies it
+once. `plugin link` doesn't run startup hooks, which is why the script applies
+it. After that the plugin reapplies on every agent status change and at each
+server start, and no restart is needed. If no server is running, the first
+apply happens at the next server start.
 
-## Update
-
-Copy the files again. Herdr runs the new script on the next event. After a
-change to `herdr-plugin.toml`, re-register it:
-
-```sh
-herdr plugin unlink agent-recency
-herdr plugin link ~/.config/herdr/plugins/agent-recency
-```
+Re-run the script after pulling changes. It backs up an existing copy that
+differs as `agent-recency.bak.<timestamp>` before it overwrites anything, and
+it re-registers the plugin so manifest changes take effect.
 
 ## Check
 
