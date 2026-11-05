@@ -7,7 +7,7 @@ import unittest
 from helpers import HOME_VARS, SKILL_HOMES, SkillCliFixture, make_git_skill_repo
 
 
-class SkillCliSyncTests(SkillCliFixture):
+class SyncFixture(SkillCliFixture):
     def setUp(self):
         super().setUp()
         self.skill = self.add_skill("example")
@@ -31,7 +31,9 @@ class SkillCliSyncTests(SkillCliFixture):
         path.write_text(text)
         return path
 
-    def test_default_homes_without_duplicate_pi_skills(self):
+
+class DefaultHomesSyncTests(SyncFixture):
+    def test_installs_without_duplicate_pi_skills(self):
         self.run_sync()
         self.assert_shared_skills(self.home / name for name in SKILL_HOMES)
         self.assertFalse((self.home / ".pi/agent/skills").exists())
@@ -43,16 +45,6 @@ class SkillCliSyncTests(SkillCliFixture):
         existing.write_text("local version\n")
         self.run_sync()
         self.assertEqual(existing.read_text(), "local version\n")
-
-    def test_custom_homes(self):
-        for name in HOME_VARS:
-            self.env[name] = str(self.root / name)
-        self.run_sync()
-        self.assert_shared_skills(Path(self.env[name]) for name in HOME_VARS[:-1])
-        pi = Path(self.env["PI_HOME"])
-        self.assertFalse((pi / "agent/skills").exists())
-        self.assertTrue((pi / "web-search.json").is_file())
-        self.assertEqual(list(self.home.iterdir()), [])
 
     def test_dry_run_does_not_write(self):
         stale = self.make_local_skill(".claude", "stale")
@@ -218,6 +210,21 @@ class SkillCliSyncTests(SkillCliFixture):
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue((self.home / ".agents/skills/example/SKILL.md").is_file())
         self.assertTrue((self.home / ".pi/web-search.json").is_file())
+
+
+class CustomHomesSyncTests(SyncFixture):
+    def setUp(self):
+        super().setUp()
+        for name in HOME_VARS:
+            self.env[name] = str(self.root / name)
+
+    def test_installs_into_env_homes_only(self):
+        self.run_sync()
+        self.assert_shared_skills(Path(self.env[name]) for name in HOME_VARS[:-1])
+        pi = Path(self.env["PI_HOME"])
+        self.assertFalse((pi / "agent/skills").exists())
+        self.assertTrue((pi / "web-search.json").is_file())
+        self.assertEqual(list(self.home.iterdir()), [])
 
 
 if __name__ == "__main__":
