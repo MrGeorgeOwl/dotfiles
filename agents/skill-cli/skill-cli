@@ -51,6 +51,7 @@ SKILL_PATH = re.compile(r"/([A-Za-z0-9._:~-]+)/SKILL\.md")
 DORMANT_DAYS = 60
 SYNCED = ("agents", "codex", "claude", "grok")
 OBSERVED = ("pi", "omp")
+SKILL_COPY_SKIP = {"evals", ".git", ".skill-cli-pin"}
 
 
 @dataclass(frozen=True)
@@ -125,12 +126,7 @@ def validate_name(name: str) -> str:
 
 
 def skill_path_for(paths: Paths, name: str) -> Path:
-    """Return skills_dir/name after validating name; die if it escapes skills_dir."""
-    validate_name(name)
-    root = paths.skills_dir.resolve()
-    skill_dir = (paths.skills_dir / name).resolve()
-    if skill_dir != root and root not in skill_dir.parents:
-        die(f"skill path escapes {paths.skills_dir}: {name!r}")
+    """Return skills_dir/name. Caller must validate_name first."""
     return paths.skills_dir / name
 
 
@@ -338,6 +334,7 @@ def render_registry(paths: Paths, old: dict[str, dict] | None = None) -> str:
 
 def find_registry_errors(paths: Paths) -> list[str]:
     errors: list[str] = []
+    source_issue = False
     registry = read_registry(paths)
     repo = {s.name: s for s in list_repo_skills(paths)}
     for name, skill in repo.items():
@@ -348,8 +345,22 @@ def find_registry_errors(paths: Paths) -> list[str]:
                 "remove the folder (sync fetches into cache)"
             )
     for name, fields in registry.items():
+        if not NAME_RE.match(name) or len(name) > 64:
+            errors.append(f"{name}: name must be lowercase-hyphen, <= 64 chars")
         if fields.get("status") not in STATUSES:
             errors.append(f"{name}: status must be one of {', '.join(STATUSES)}")
+        agents = fields.get("agents")
+        if agents is not None and agents != "":
+            if not isinstance(agents, list):
+                errors.append(
+                    f"{name}: agents must be a YAML list, got {type(agents).__name__}"
+                )
+            else:
+                bad = [str(p) for p in agents if str(p) not in SYNCED]
+                if bad:
+                    errors.append(
+                        f"{name}: unknown agents {bad}; expected subset of {list(SYNCED)}"
+                    )
         src = fields.get("source")
         if src is None or src == "":
             if name not in repo:
@@ -359,17 +370,21 @@ def find_registry_errors(paths: Paths) -> list[str]:
             continue
         if not isinstance(src, dict):
             errors.append(f"{name}: source must be a mapping with url and pin")
+            source_issue = True
             continue
         if not src.get("url"):
             errors.append(f"{name}: source.url missing")
+            source_issue = True
         else:
             try:
                 parse_git_url(str(src["url"]))
             except FetchError as exc:
                 errors.append(f"{name}: {exc}")
+                source_issue = True
         problem = pin_problem(src.get("pin"))
         if problem:
             errors.append(f"{name}: {problem}")
+            source_issue = True
     for name, skill in repo.items():
         if name not in registry and (skill / "SKILL.md").is_file():
             errors.append(f"{name}: missing from {paths.registry.name}; run {PROG} registry")
@@ -377,16 +392,8 @@ def find_registry_errors(paths: Paths) -> list[str]:
         not paths.registry.is_file()
         or paths.registry.read_text() != render_registry(paths, registry)
     )
-    if stale:
-        # Incomplete source blocks make render rewrite url/pin lines; report those
-        # alone so check does not also say "out of date" and push a destructive registry.
-        source_issue = any(
-            "source.url" in e or "source.pin" in e or "source must be" in e
-            or "unrecognized git url" in e
-            for e in errors
-        )
-        if not source_issue:
-            errors.append(f"{paths.registry.name} is out of date; run {PROG} registry")
+    if stale and not source_issue:
+        errors.append(f"{paths.registry.name} is out of date; run {PROG} registry")
     return errors
 
 
@@ -556,7 +563,7 @@ def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
             die("--pin is required with --source")
         problem = pin_problem(args.pin)
         if problem:
-            die(f"--pin must be a 40-char commit SHA" if "SHA" in problem else f"--pin: {problem}")
+            die(f"--pin: {problem}")
         skill_dir = skill_path_for(paths, name)
         if skill_dir.exists():
             die(
@@ -647,16 +654,19 @@ def copy_path(src: Path, dest: Path, dry_run: bool) -> None:
         shutil.copy2(src, dest)
 
 
-def copy_dir_contents(src: Path, dest: Path, dry_run: bool, skip: str | None = None) -> None:
+def copy_dir_contents(
+    src: Path, dest: Path, dry_run: bool, skip: set[str] | None = None,
+) -> None:
     """Merge src into dest. Destination-only files and dirs are kept."""
     if not src.is_dir():
         return
     if dry_run:
         log(f"would sync {src}/ -> {dest}/")
         return
+    skip = skip or set()
     dest.mkdir(parents=True, exist_ok=True)
     for item in list(src.iterdir()):
-        if skip and item.name == skip:
+        if item.name in skip:
             continue
         target = dest / item.name
         if item.is_dir():
@@ -666,16 +676,12 @@ def copy_dir_contents(src: Path, dest: Path, dry_run: bool, skip: str | None = N
 
 
 def resolve_agents(fields: dict) -> tuple[str, ...]:
+    """Return agents list; invalid values are filtered (check reports them)."""
     raw = fields.get("agents")
-    if not raw:
+    if not isinstance(raw, list) or not raw:
         return SYNCED
-    if not isinstance(raw, list):
-        die(f"agents must be a YAML list, got {type(raw).__name__}: {raw!r}")
-    parts = [str(p) for p in raw]
-    bad = [p for p in parts if p not in SYNCED]
-    if bad:
-        die(f"unknown agents {bad}; expected subset of {list(SYNCED)}")
-    return tuple(parts)
+    parts = tuple(str(p) for p in raw if str(p) in SYNCED)
+    return parts or SYNCED
 
 
 def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
@@ -706,7 +712,7 @@ def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
     for skill in repo_skills:
         fields = registry.get(skill.name, {})
         for label in resolve_agents(fields):
-            copy_dir_contents(skill, skill_dests[label] / skill.name, dry_run, skip="evals")
+            copy_dir_contents(skill, skill_dests[label] / skill.name, dry_run, skip=SKILL_COPY_SKIP)
 
     failed_externals: list[str] = []
     for name, fields in externals:
@@ -729,7 +735,7 @@ def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
             failed_externals.append(name)
             continue
         for label in resolve_agents(fields):
-            copy_dir_contents(content, skill_dests[label] / name, dry_run, skip="evals")
+            copy_dir_contents(content, skill_dests[label] / name, dry_run, skip=SKILL_COPY_SKIP)
 
     prompts = paths.agents_dir / "prompts"
     if has_real_files(prompts):
@@ -978,7 +984,7 @@ def build_report(paths: Paths) -> dict:
         skills.append({
             "name": name,
             "status": fields.get("status", "unregistered"),
-            "source": src if src and src.get("url") else src,
+            "source": src,
             "problems": problems,
             "hash": repo_hash,
             "copies": where,

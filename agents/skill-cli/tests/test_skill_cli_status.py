@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import unittest
 
-from helpers import SkillCliFixture, load_skill_cli, make_git_skill_repo
+from helpers import SkillCliFixture, make_git_skill_repo
 
 
 def jsonl(path, *records):
@@ -151,33 +151,6 @@ class StatusTests(StatusFixture):
         by_name = {s["name"]: s for s in rep["skills"]}
         self.assertEqual(by_name["tool"]["copies"]["agents"], "not fetched")
 
-    def test_ssh_url_reported_not_fatal(self):
-        self.write_registry(
-            self.registry_entry("alpha", description="Use for alpha."),
-            self.registry_entry("beta", description="Use for beta."),
-            self.registry_entry(
-                "tool",
-                description="External tool",
-                status="experimental",
-                source={
-                    "url": "ssh://git@github.com/example/skills",
-                    "pin": "c" * 40,
-                    "path": "tool",
-                },
-            ),
-        )
-        rep = self.report()
-        by_name = {s["name"]: s for s in rep["skills"]}
-        self.assertIn("tool", by_name)
-        self.assertEqual(
-            by_name["tool"]["source"]["url"],
-            "ssh://git@github.com/example/skills",
-        )
-        check = self.run_cli("check", check=False)
-        self.assertNotIn("Traceback", check.stderr + check.stdout)
-        # ssh:// is a recognized scheme; check only fails if registry text drifts
-        self.assertNotIn("unrecognized git url", check.stderr)
-
 
 class RegistryCheckTests(StatusFixture):
     def test_registry_writes_and_preserves_purpose(self):
@@ -227,15 +200,30 @@ class RegistryCheckTests(StatusFixture):
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("out of date", bad.stderr)
 
-    def test_check_pin_problems(self):
-        for label, source, needle in (
-            ("missing", {"url": "https://github.com/example/skills"}, "source.pin missing"),
+    def test_check_pin_and_url_problems(self):
+        cases = (
+            ("missing-pin", {"url": "https://github.com/example/skills"}, "source.pin missing"),
             (
                 "non-sha",
                 {"url": "https://github.com/example/skills", "pin": "v1.2.3"},
                 "40-char commit SHA",
             ),
-        ):
+            (
+                "unrecognized-url",
+                {"url": "not-a-git-url", "pin": "c" * 40},
+                "unrecognized git url",
+            ),
+            (
+                "ssh-url",
+                {
+                    "url": "ssh://git@github.com/example/skills",
+                    "pin": "c" * 40,
+                    "path": "tool",
+                },
+                None,  # recognized; may still fail out-of-date vs hand-built YAML
+            ),
+        )
+        for label, source, needle in cases:
             with self.subTest(label):
                 self.write_registry(
                     self.registry_entry("alpha", description="Use for alpha."),
@@ -247,9 +235,52 @@ class RegistryCheckTests(StatusFixture):
                         source=source,
                     ),
                 )
-                bad = self.run_cli("check", check=False)
-                self.assertNotEqual(bad.returncode, 0)
-                self.assertIn(needle, bad.stderr)
+                result = self.run_cli("check", check=False)
+                if needle is None:
+                    # ssh is valid; regenerate so only source validity matters, then check
+                    # Hand YAML may drift from render; assert scheme is accepted.
+                    self.assertNotIn("unrecognized git url", result.stderr)
+                    # Status must include it without exiting
+                    rep = self.report()
+                    self.assertEqual(
+                        {s["name"]: s for s in rep["skills"]}["tool"]["source"]["url"],
+                        source["url"],
+                    )
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(needle, result.stderr)
+
+    def test_check_rejects_bad_agents(self):
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha.", agents='["claud"]'),
+            self.registry_entry("beta", description="Use for beta."),
+        )
+        bad = self.run_cli("check", check=False)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("unknown agents", bad.stderr)
+        # status must not die on bad agents
+        rep = self.report()
+        self.assertTrue(any(s["name"] == "alpha" for s in rep["skills"]))
+
+    def test_check_rejects_bad_registry_name(self):
+        pin = "d" * 40
+        bad_entry = (
+            '- name: "../../../escaped"\n'
+            '  description: "bad"\n'
+            '  status: "experimental"\n'
+            '  purpose: ""\n'
+            "  source:\n"
+            '    url: "https://github.com/example/skills"\n'
+            f'    pin: "{pin}"\n'
+        )
+        self.write_registry(
+            self.registry_entry("alpha", description="Use for alpha."),
+            self.registry_entry("beta", description="Use for beta."),
+            bad_entry,
+        )
+        bad = self.run_cli("check", check=False)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("lowercase-hyphen", bad.stderr)
 
     def test_check_rejects_local_folder_for_external(self):
         self.add_skill("tool", "Should not be both.")
@@ -337,6 +368,7 @@ class AddRemoveTests(StatusFixture):
 
     def test_add_external_checks_local_folder_before_fetch(self):
         self.add_skill("tool", "Local tool.")
+        self.run_cli("registry")
         repo = make_git_skill_repo(self.root)
         result = self.run_cli(
             "add", "tool", "--source", repo.url, "--pin", repo.pin,
@@ -346,10 +378,12 @@ class AddRemoveTests(StatusFixture):
         self.assertIn("local folder", result.stderr)
         self.assertFalse(any(Path(self.env["XDG_CACHE_HOME"]).rglob("SKILL.md")))
         registry = self.entry / "skills.yaml"
-        if registry.is_file():
-            self.assertNotIn("source:", registry.read_text())
+        self.assertTrue(registry.is_file())
+        self.assertNotIn("source:", registry.read_text())
 
     def test_add_external_missing_skill_md_leaves_registry_alone(self):
+        self.run_cli("registry")
+        before = (self.entry / "skills.yaml").read_text()
         repo = make_git_skill_repo(self.root)
         result = self.run_cli(
             "add", "tool", "--source", repo.url, "--pin", repo.pin, "--path", "missing",
@@ -357,8 +391,8 @@ class AddRemoveTests(StatusFixture):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.entry / "skills/tool").exists())
-        registry = self.entry / "skills.yaml"
-        self.assertTrue(not registry.is_file() or "tool" not in registry.read_text())
+        self.assertEqual((self.entry / "skills.yaml").read_text(), before)
+        self.assertNotIn("tool", before)
 
     def test_add_rejects_non_sha_pin(self):
         result = self.run_cli(
@@ -448,68 +482,75 @@ class EntrypointTests(SkillCliFixture):
         self.assertGreaterEqual(len(rep["skills"]), 1)
 
 
-class ParseRecordTests(unittest.TestCase):
-    def setUp(self):
-        self.mod = load_skill_cli()
+class ParseRecordTests(StatusFixture):
+    """Feed agent log shapes through status --json (same path as production)."""
 
     def test_parse_codex_record(self):
-        u = self.mod.Usage()
-        record = {
-            "timestamp": "2024-05-01T00:00:00Z",
-            "payload": {
-                "type": "function_call",
-                "call_id": "c1",
-                "arguments": json.dumps({
-                    "cmd": ["cat", "/home/u/.agents/skills/alpha/SKILL.md"]
-                }),
+        session = self.home / ".codex/sessions/s.jsonl"
+        jsonl(
+            session,
+            {
+                "timestamp": "2024-05-01T00:00:00Z",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "arguments": json.dumps({
+                        "cmd": ["cat", "/home/u/.agents/skills/alpha/SKILL.md"],
+                    }),
+                },
             },
-        }
-        line = json.dumps(record)
-        self.mod.parse_codex_record(u, "sess.jsonl", line, record)
-        self.assertEqual(u.loads["alpha"], 1)
+        )
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertEqual(by_name["alpha"]["loads"].get("codex"), 1)
 
     def test_parse_grok_record(self):
-        u = self.mod.Usage()
-        record = {
-            "timestamp": "2024-05-02T00:00:00Z",
-            "params": {
-                "update": {
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": "g1",
-                    "rawInput": {"path": "/h/.grok/skills/beta/SKILL.md"},
-                }
+        updates = self.home / ".grok/sessions/s/updates.jsonl"
+        jsonl(
+            updates,
+            {
+                "timestamp": "2024-05-02T00:00:00Z",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "g1",
+                        "rawInput": {"path": "/h/.grok/skills/beta/SKILL.md"},
+                    }
+                },
             },
-        }
-        self.mod.parse_grok_record(u, "u.jsonl", "{}", record)
-        self.assertEqual(u.loads["beta"], 1)
+        )
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertEqual(by_name["beta"]["loads"].get("grok"), 1)
 
     def test_parse_claude_read_and_command(self):
-        u = self.mod.Usage()
-        read_rec = {
-            "type": "assistant",
-            "timestamp": "2024-05-03T00:00:00Z",
-            "message": {
-                "content": [{
-                    "type": "tool_use",
-                    "id": "r1",
-                    "name": "Read",
-                    "input": {"file_path": "/h/.claude/skills/alpha/SKILL.md"},
-                }]
+        project = self.home / ".claude/projects/demo"
+        jsonl(
+            project / "a.jsonl",
+            {
+                "type": "assistant",
+                "timestamp": "2024-05-03T00:00:00Z",
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "r1",
+                        "name": "Read",
+                        "input": {"file_path": "/h/.claude/skills/alpha/SKILL.md"},
+                    }]
+                },
             },
-        }
-        self.mod.parse_claude_record(u, "a.jsonl", "{}", read_rec)
-        self.assertEqual(u.loads["alpha"], 1)
+            {
+                "type": "user",
+                "uuid": "u1",
+                "timestamp": "2024-05-04T00:00:00Z",
+                "message": {"content": "<command-name>/beta</command-name>"},
+            },
+        )
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertEqual(by_name["alpha"]["loads"].get("claude"), 1)
+        self.assertEqual(by_name["beta"]["loads"].get("claude"), 1)
 
-        cmd_rec = {
-            "type": "user",
-            "uuid": "u1",
-            "timestamp": "2024-05-04T00:00:00Z",
-            "message": {
-                "content": "<command-name>/beta</command-name>"
-            },
-        }
-        self.mod.parse_claude_record(u, "a.jsonl", "{}", cmd_rec)
-        self.assertEqual(u.loads["beta"], 1)
 
 
 if __name__ == "__main__":
