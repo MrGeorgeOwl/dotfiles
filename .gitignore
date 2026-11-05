@@ -6,3 +6,7 @@ lazy-lock.json
 .config/btop/btop.log
 TASKS.md
 .DS_Store
+
+# Skill evals run locally only (.agents/skill-doctor eval <skill>)
+.agents/skills/*/evals/
+__pycache__/

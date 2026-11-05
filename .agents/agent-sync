@@ -22,7 +22,8 @@ in .agents/skills is moved to
 ${XDG_DATA_HOME:-~/.local/share}/agent-sync/removed-<timestamp>-<pid>/<agent>/.
 Hidden entries (such as ~/.codex/skills/.system), plain files, and skills
 listed one per line in ${XDG_CONFIG_HOME:-~/.config}/agent-sync/keep-skills
-are left alone. Other destination-only files are not deleted.
+are left alone. Each skill's evals/ folder is not copied. Other
+destination-only files are not deleted.
 EOF
 }
 
@@ -73,6 +74,7 @@ copy_path() {
 copy_dir_contents() {
   local src="$1"
   local dest="$2"
+  local skip="${3:-}"
   local item
 
   [[ -d "$src" ]] || return 0
@@ -85,7 +87,32 @@ copy_dir_contents() {
   mkdir -p "$dest"
 
   for item in "$src"/*(N) "$src"/.[!.]*(N); do
+    [[ -n "$skip" && "${item:t}" == "$skip" ]] && continue
     cp -R "$item" "$dest"/
+  done
+}
+
+copy_skills() {
+  local src="$1"
+  local dest="$2"
+  local item
+
+  [[ -d "$src" ]] || return 0
+
+  if (( dry_run )); then
+    log "would sync $src/ -> $dest/ (without evals/)"
+    return 0
+  fi
+
+  mkdir -p "$dest"
+
+  # A skill's evals/ folder is local-only; agents should not load it.
+  for item in "$src"/*(N) "$src"/.[!.]*(N); do
+    if [[ -d "$item" ]]; then
+      copy_dir_contents "$item" "$dest/${item:t}" evals
+    else
+      cp -R "$item" "$dest"/
+    fi
   done
 }
 
@@ -168,10 +195,10 @@ prune_skills "$agents_dir/skills" "$codex_home/skills" codex
 prune_skills "$agents_dir/skills" "$claude_home/skills" claude
 prune_skills "$agents_dir/skills" "$grok_home/skills" grok
 
-copy_dir_contents "$agents_dir/skills" "$agents_home/skills"
-copy_dir_contents "$agents_dir/skills" "$codex_home/skills"
-copy_dir_contents "$agents_dir/skills" "$claude_home/skills"
-copy_dir_contents "$agents_dir/skills" "$grok_home/skills"
+copy_skills "$agents_dir/skills" "$agents_home/skills"
+copy_skills "$agents_dir/skills" "$codex_home/skills"
+copy_skills "$agents_dir/skills" "$claude_home/skills"
+copy_skills "$agents_dir/skills" "$grok_home/skills"
 # Pi also discovers ~/.agents/skills; a second copy causes name collisions.
 
 if has_real_files "$agents_dir/prompts"; then

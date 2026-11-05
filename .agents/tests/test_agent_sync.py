@@ -142,6 +142,17 @@ class AgentSyncTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".claude"])
         self.assertEqual(os.listdir(self.home / ".claude/skills"), ["stale"])
 
+    def test_skill_evals_are_not_synced(self):
+        evals = self.skill.parent / "evals/triggers.json"
+        evals.parent.mkdir()
+        evals.write_text("{}\n")
+        (self.skill.parent / "agents").mkdir()
+        (self.skill.parent / "agents/openai.yaml").write_text("x\n")
+        self.run_sync()
+        for home in SKILL_HOMES:
+            skill = self.home / home / "skills/example"
+            self.assertEqual(sorted(p.name for p in skill.iterdir()), ["SKILL.md", "agents"])
+
     def test_second_run_is_noop(self):
         self.make_skill(".grok", "stale")
         self.run_sync()
