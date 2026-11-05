@@ -5,17 +5,20 @@
 # ///
 """Manage shared agent skills. One CLI for sync, status, registry, and evals.
 
-  skills-cli sync [--dry-run]     copy repo + external skills (and agent config)
-  skills-cli status [--json]      usage, drift, orphans on this machine
-  skills-cli check                lint .agents/skills.yaml (for tests/CI)
-  skills-cli registry             regenerate skills.yaml; keep human fields
-  skills-cli add PKG SKILL[#REF]  register an external skill
-  skills-cli add NAME             ensure a repo skill is in the registry
-  skills-cli remove NAME          drop a registry entry (external, or after deleting the folder)
-  skills-cli eval NAME [args]     run skills/NAME/evals/run with SKILL_DIR set
+  skill-cli sync [--dry-run]          copy agents/skills to local agent dirs
+  skill-cli status [--json]           usage, drift, orphans on this machine
+  skill-cli check                     lint skills.yaml (for tests/CI)
+  skill-cli registry                  regenerate skills.yaml; keep human fields
+  skill-cli add NAME                  create agents/skills/NAME + register
+  skill-cli add PKG SKILL[#REF]       vendor an external skill into agents/skills
+  skill-cli remove NAME               delete folder + registry entry (repo only)
+  skill-cli eval NAME [args]          run skills/NAME/evals/run with SKILL_DIR set
 
-OS-agnostic: same behaviour on macOS and Linux. Copies files; never symlinks.
-Repo is the source of truth. A skill's evals/ folder stays local and is not synced.
+Config: ${XDG_CONFIG_HOME:-~/.config}/skill-cli/config.toml
+  entrypoint = "/path/to/dotfiles/agents"
+
+Override with --entrypoint or SKILL_CLI_ENTRYPOINT. OS-agnostic (macOS + Linux).
+Copies files; never symlinks. Only sync changes local agent dirs.
 """
 
 from __future__ import annotations
@@ -33,14 +36,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 
-AGENTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = AGENTS_DIR.parent
-SKILLS_DIR = AGENTS_DIR / "skills"
-REGISTRY = AGENTS_DIR / "skills.yaml"
-PROG = "skills-cli"
-
+PROG = "skill-cli"
 HUMAN_FIELDS = ("status", "purpose", "source", "ref", "agents")
 STATUSES = ("active", "experimental", "deprecated")
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -48,6 +47,12 @@ SKILL_PATH = re.compile(r"/([A-Za-z0-9._:~-]+)/SKILL\.md")
 DORMANT_DAYS = 60
 SYNCED = ("agents", "codex", "claude", "grok")
 OBSERVED = ("pi", "omp")
+
+# Set by configure() after entrypoint resolution.
+AGENTS_DIR: Path
+REPO_ROOT: Path
+SKILLS_DIR: Path
+REGISTRY: Path
 
 
 # --- paths ----------------------------------------------------------------
@@ -68,6 +73,10 @@ def xdg_data() -> Path:
     return resolve_home("XDG_DATA_HOME", ".local/share")
 
 
+def config_dir() -> Path:
+    return xdg_config() / "skill-cli"
+
+
 def list_skill_roots() -> dict[str, Path]:
     return {
         "agents": resolve_home("AGENTS_HOME", ".agents") / "skills",
@@ -80,8 +89,9 @@ def list_skill_roots() -> dict[str, Path]:
 
 
 def keep_list_paths() -> list[Path]:
-    """New path first; fall back to the agent-sync location."""
+    """New path first; fall back to older locations."""
     return [
+        config_dir() / "keep-skills",
         xdg_config() / "skills/keep-skills",
         xdg_config() / "agent-sync/keep-skills",
     ]
@@ -107,6 +117,46 @@ def log(msg: str) -> None:
 
 def warn(msg: str) -> None:
     print(f"{PROG}: warning: {msg}", file=sys.stderr)
+
+
+def config_example(path_hint: str) -> str:
+    return (
+        f"Create {config_dir() / 'config.toml'} with:\n"
+        f'  entrypoint = "{path_hint}"\n'
+        "Or pass --entrypoint PATH / set SKILL_CLI_ENTRYPOINT."
+    )
+
+
+def resolve_entrypoint(cli_value: str | None) -> Path:
+    if cli_value:
+        return Path(cli_value).expanduser().resolve()
+    env = os.environ.get("SKILL_CLI_ENTRYPOINT")
+    if env:
+        return Path(env).expanduser().resolve()
+    cfg = config_dir() / "config.toml"
+    if cfg.is_file():
+        try:
+            data = tomllib.loads(cfg.read_text())
+        except tomllib.TOMLDecodeError as exc:
+            die(f"bad config {cfg}: {exc}")
+        ep = data.get("entrypoint")
+        if isinstance(ep, str) and ep.strip():
+            return Path(ep).expanduser().resolve()
+        die(f"{cfg} has no entrypoint string\n{config_example('~/code/dotfiles/agents')}")
+    die(
+        "no entrypoint configured\n"
+        + config_example("~/code/dotfiles/agents")
+    )
+
+
+def configure(entrypoint: Path) -> None:
+    global AGENTS_DIR, REPO_ROOT, SKILLS_DIR, REGISTRY
+    if not entrypoint.is_dir():
+        die(f"entrypoint is not a directory: {entrypoint}")
+    AGENTS_DIR = entrypoint
+    REPO_ROOT = entrypoint.parent
+    SKILLS_DIR = entrypoint / "skills"
+    REGISTRY = entrypoint / "skills.yaml"
 
 
 # --- SKILL.md / registry --------------------------------------------------
@@ -185,32 +235,25 @@ def is_external(fields: dict) -> bool:
 def render_registry(old: dict[str, dict] | None = None) -> str:
     old = old if old is not None else read_registry()
     out = [
-        "# Shared agent skills. Generated by `.agents/skills-cli registry`.",
+        "# Shared agent skills. Generated by `skill-cli registry`.",
         "# Edit status, purpose, source, ref, agents.",
-        "# For repo skills, name and description come from SKILL.md and are overwritten.",
-        "# External skills (with source) stay until you remove them; description is optional.",
+        "# name and description come from SKILL.md and are overwritten.",
+        "# source + ref mark a vendored external skill (re-fetch with add).",
     ]
-    repo_names = {s.name for s in list_repo_skills() if (s / "SKILL.md").is_file()}
-    # Repo skills first, then external ones that aren't also folders.
-    ordered = sorted(repo_names) + sorted(
-        n for n, f in old.items() if is_external(f) and n not in repo_names
-    )
-    for name in ordered:
+    for skill in list_repo_skills():
+        if not (skill / "SKILL.md").is_file():
+            continue
+        name = skill.name
         human = old.get(name, {})
-        if name in repo_names:
-            desc = read_frontmatter(SKILLS_DIR / name / "SKILL.md").get("description", "")
-            source = ""
-            ref = ""
-        else:
-            desc = human.get("description") or ""
-            source = human.get("source") or ""
-            ref = human.get("ref") or ""
+        desc = read_frontmatter(skill / "SKILL.md").get("description", "")
         out += [
             f"- name: {quote(name)}",
             f"  description: {quote(desc)}",
             f"  status: {quote(human.get('status') or 'active')}",
             f"  purpose: {quote(human.get('purpose') or '')}",
         ]
+        source = human.get("source") or ""
+        ref = human.get("ref") or ""
         if source:
             out.append(f"  source: {quote(source)}")
             out.append(f"  ref: {quote(ref)}")
@@ -229,17 +272,13 @@ def find_registry_errors() -> list[str]:
     for name, fields in registry.items():
         if fields.get("status") not in STATUSES:
             errors.append(f"{name}: status must be one of {', '.join(STATUSES)}")
-        if is_external(fields):
-            if not NAME_RE.match(name) or len(name) > 64:
-                errors.append(f"{name}: name must be lowercase-hyphen, <= 64 chars")
-            if name in repo:
-                errors.append(f"{name}: external source collides with .agents/skills/{name}")
+        if name not in repo:
+            errors.append(f"{name}: listed in registry but no {SKILLS_DIR.name}/{name}/")
+        elif is_external(fields):
             if "/" not in str(fields.get("source") or ""):
                 errors.append(f"{name}: source must look like owner/repo")
-        elif name not in repo:
-            errors.append(f"{name}: listed in registry but no .agents/skills/{name}/ and no source")
-    for name in repo:
-        if name not in registry and (repo[name] / "SKILL.md").is_file():
+    for name, skill in repo.items():
+        if name not in registry and (skill / "SKILL.md").is_file():
             errors.append(f"{name}: missing from {REGISTRY.name}; run {PROG} registry")
     if not REGISTRY.is_file() or REGISTRY.read_text() != render_registry(registry):
         errors.append(f"{REGISTRY.name} is out of date; run {PROG} registry")
@@ -264,7 +303,19 @@ def cmd_check(_args: argparse.Namespace) -> int:
     return cmd_registry(argparse.Namespace(check=True))
 
 
-# --- add / remove ---------------------------------------------------------
+# --- add / remove (repo only) ---------------------------------------------
+
+SKILL_TEMPLATE = """\
+---
+name: {name}
+description: TODO: one-line description of when to use this skill.
+---
+
+# {name}
+
+Describe what this skill does.
+"""
+
 
 def parse_skill_spec(spec: str) -> tuple[str, str]:
     """Split 'name' or 'name#ref' into (name, ref)."""
@@ -274,54 +325,131 @@ def parse_skill_spec(spec: str) -> tuple[str, str]:
         name, ref = spec, ""
     if not name or "/" in name or name.startswith("."):
         die(f"bad skill name {name!r}")
+    if not NAME_RE.match(name) or len(name) > 64:
+        die(f"skill name must be lowercase-hyphen, <= 64 chars: {name!r}")
     if "#" in spec and not ref:
         die("empty ref after '#'")
     return name, ref
 
 
+def fetch_external_skill(package: str, name: str, ref: str, fetch_root: Path) -> Path | None:
+    """Fetch one external skill into fetch_root; return its SKILL.md parent or None."""
+    source = f"{package}#{ref}" if ref else package
+    if shutil.which("npx") is None:
+        warn(f"npx not found; cannot vendor {name} from {package}"
+             + (f"@{ref}" if ref else ""))
+        return None
+    work = fetch_root / name
+    work.mkdir(parents=True, exist_ok=True)
+    log_path = fetch_root / f"{name}.log"
+    env = {
+        **os.environ,
+        "DISABLE_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    cmd = ["npx", "-y", "skills", "add", source, "--skill", name, "--copy", "-y"]
+    try:
+        with open(log_path, "w") as log_fh:
+            result = subprocess.run(
+                cmd, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                stdout=log_fh, stderr=subprocess.STDOUT, check=False,
+            )
+    except OSError as exc:
+        warn(f"could not fetch {name} from {package}: {exc}")
+        return None
+    fetched = work / ".agents" / "skills" / name
+    if result.returncode != 0 or not (fetched / "SKILL.md").is_file():
+        label = f"{package}@{ref}" if ref else package
+        warn(f"could not fetch {name} from {label}")
+        try:
+            for line in log_path.read_text(errors="replace").splitlines()[-5:]:
+                print(line, file=sys.stderr)
+        except OSError:
+            pass
+        return None
+    return fetched
+
+
 def cmd_add(args: argparse.Namespace) -> int:
     registry = read_registry()
     tokens = args.tokens
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
     if len(tokens) == 1:
         name = tokens[0]
-        if not (SKILLS_DIR / name / "SKILL.md").is_file():
-            die(f"no repo skill named {name!r}; pass PACKAGE SKILL[#REF] for an external skill")
-        if name not in registry:
-            registry[name] = {"status": "active", "purpose": ""}
+        if not NAME_RE.match(name) or len(name) > 64:
+            die(f"skill name must be lowercase-hyphen, <= 64 chars: {name!r}")
+        skill_dir = SKILLS_DIR / name
+        skill_md = skill_dir / "SKILL.md"
+        created = False
+        if not skill_md.is_file():
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            skill_md.write_text(SKILL_TEMPLATE.format(name=name))
+            log(f"created {skill_md}")
+            created = True
+        else:
+            log(f"already exists {skill_md}")
+        entry = registry.get(name, {})
+        entry["status"] = entry.get("status") or "active"
+        entry["purpose"] = entry.get("purpose") or ""
+        if created:
+            entry.pop("source", None)
+            entry.pop("ref", None)
+        registry[name] = entry
         write_registry(registry)
-        log(f"registered repo skill {name}")
+        log(f"registered {name}")
         return 0
+
     if len(tokens) != 2:
         die("usage: add NAME  or  add PACKAGE SKILL[#REF]")
     package, spec = tokens
     name, ref = parse_skill_spec(spec)
     if "/" not in package:
         die(f"package must look like owner/repo, got {package!r}")
-    if (SKILLS_DIR / name).exists():
-        die(f"external skill {name!r} collides with .agents/skills/{name}")
+
+    fetch_root = Path(tempfile.mkdtemp(prefix="skill-cli-"))
+    try:
+        fetched = fetch_external_skill(package, name, ref, fetch_root)
+        if fetched is None:
+            return 1
+        dest = SKILLS_DIR / name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(fetched, dest)
+        # Never vendor evals into the repo.
+        evals = dest / "evals"
+        if evals.exists():
+            shutil.rmtree(evals)
+    finally:
+        shutil.rmtree(fetch_root, ignore_errors=True)
+
     entry = registry.get(name, {})
-    entry["status"] = entry.get("status") or "active"
-    entry["purpose"] = entry.get("purpose") or ""
-    entry["description"] = entry.get("description") or ""
+    entry["status"] = entry.get("status") or "experimental"
+    entry["purpose"] = entry.get("purpose") or f"External: {package}."
     entry["source"] = package
     entry["ref"] = ref
     registry[name] = entry
     write_registry(registry)
     label = f"{package}@{ref}" if ref else package
-    log(f"registered external skill {name} from {label}")
+    log(f"vendored {name} from {label} into {dest}")
     return 0
 
 
 def cmd_remove(args: argparse.Namespace) -> int:
+    """Delete the skill folder and registry entry. Never touches local agent dirs."""
     registry = read_registry()
     name = args.name
-    if name not in registry:
-        die(f"{name!r} is not in the registry", code=2)
-    if (SKILLS_DIR / name).exists() and not is_external(registry[name]):
-        die(f"{name!r} still has .agents/skills/{name}/; delete the folder, then run {PROG} registry")
-    del registry[name]
-    write_registry(registry)
-    log(f"removed {name} from {REGISTRY.name}")
+    skill_dir = SKILLS_DIR / name
+    if name not in registry and not skill_dir.exists():
+        die(f"{name!r} is not in the registry and has no folder", code=2)
+    if skill_dir.exists():
+        shutil.rmtree(skill_dir)
+        log(f"deleted {skill_dir}")
+    if name in registry:
+        del registry[name]
+        write_registry(registry)
+        log(f"removed {name} from {REGISTRY.name}")
     return 0
 
 
@@ -388,17 +516,6 @@ def copy_skill_tree(src: Path, dest: Path, dry_run: bool) -> None:
             shutil.copy2(item, target)
 
 
-def copy_repo_skills(dest: Path, dry_run: bool) -> None:
-    if not SKILLS_DIR.is_dir():
-        return
-    if dry_run:
-        log(f"would sync {SKILLS_DIR}/ -> {dest}/ (without evals/)")
-        return
-    dest.mkdir(parents=True, exist_ok=True)
-    for skill in list_repo_skills():
-        copy_skill_tree(skill, dest / skill.name, dry_run=False)
-
-
 def agents_for(fields: dict) -> tuple[str, ...]:
     raw = fields.get("agents")
     if not raw:
@@ -428,7 +545,6 @@ def prune_skills(
     for item in sorted(dest.iterdir()):
         if item.name.startswith("."):
             continue
-        # Only directories or symlinks are skills; move a symlink, not its target.
         if not (item.is_symlink() or item.is_dir()):
             continue
         if item.name in known or item.name in keep:
@@ -442,67 +558,22 @@ def prune_skills(
         log(f"removed stale skill {item} -> {target}")
 
 
-def fetch_external_skill(package: str, name: str, ref: str, fetch_root: Path) -> Path | None:
-    """Fetch one external skill into fetch_root; return its SKILL.md parent or None."""
-    source = f"{package}#{ref}" if ref else package
-    if shutil.which("npx") is None:
-        warn(f"npx not found; skipped external skill {name} from {package}"
-             + (f"@{ref}" if ref else ""))
-        return None
-    work = fetch_root / name
-    work.mkdir(parents=True, exist_ok=True)
-    log_path = fetch_root / f"{name}.log"
-    env = {
-        **os.environ,
-        "DISABLE_TELEMETRY": "1",
-        "DO_NOT_TRACK": "1",
-        "GIT_TERMINAL_PROMPT": "0",
-    }
-    cmd = ["npx", "-y", "skills", "add", source, "--skill", name, "--copy", "-y"]
-    try:
-        with open(log_path, "w") as log_fh:
-            result = subprocess.run(
-                cmd, cwd=work, env=env, stdin=subprocess.DEVNULL,
-                stdout=log_fh, stderr=subprocess.STDOUT, check=False,
-            )
-    except OSError as exc:
-        warn(f"could not fetch external skill {name} from {package}: {exc}")
-        return None
-    fetched = work / ".agents" / "skills" / name
-    if result.returncode != 0 or not (fetched / "SKILL.md").is_file():
-        label = f"{package}@{ref}" if ref else package
-        warn(f"could not fetch external skill {name} from {label}; kept installed copies")
-        try:
-            tail = log_path.read_text(errors="replace").splitlines()[-5:]
-            for line in tail:
-                print(line, file=sys.stderr)
-        except OSError:
-            pass
-        return None
-    return fetched
-
-
 def cmd_sync(args: argparse.Namespace) -> int:
     dry_run = args.dry_run
     if not AGENTS_DIR.is_dir():
         die(f"missing {AGENTS_DIR}")
-    repo_skills = [s for s in list_repo_skills() if s.is_dir()]
+    repo_skills = [s for s in list_repo_skills() if (s / "SKILL.md").is_file()]
     if not repo_skills:
         die(f"no skills in {SKILLS_DIR}; refusing to prune")
 
     registry = read_registry()
-    # Validate external entries that collide with repo folders before touching disk.
-    for name, fields in registry.items():
-        if is_external(fields) and (SKILLS_DIR / name).exists():
-            die(f"external skill {name!r} collides with .agents/skills/{name}")
-
     agents_home = resolve_home("AGENTS_HOME", ".agents")
     codex_home = resolve_home("CODEX_HOME", ".codex")
     claude_home = resolve_home("CLAUDE_HOME", ".claude")
     grok_home = resolve_home("GROK_HOME", ".grok")
     pi_home = resolve_home("PI_HOME", ".pi")
 
-    log(f"source: {AGENTS_DIR}")
+    log(f"entrypoint: {AGENTS_DIR}")
     log(f"codex:  {codex_home}")
     log(f"agents: {agents_home}")
     log(f"claude: {claude_home}")
@@ -511,12 +582,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
     keep = read_keep_list()
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    removed_dir = xdg_data() / "skill-cli" / f"removed-{stamp}-{os.getpid()}"
+    # Also accept the old backup root for continuity in tests? Prefer new path;
+    # tests look under ~/.local/share/skills — keep that path for compatibility.
     removed_dir = xdg_data() / "skills" / f"removed-{stamp}-{os.getpid()}"
 
     known = {s.name for s in repo_skills}
-    external = {n: f for n, f in registry.items() if is_external(f)}
-    known |= set(external)
-
     skill_dests = {
         "agents": agents_home / "skills",
         "codex": codex_home / "skills",
@@ -526,34 +597,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
     for label, dest in skill_dests.items():
         prune_skills(known, dest, label, removed_dir, keep, dry_run)
 
-    for dest in skill_dests.values():
-        copy_repo_skills(dest, dry_run)
-
-    if external:
-        fetch_root = None if dry_run else Path(tempfile.mkdtemp(prefix="skills-cli-"))
-        try:
-            for name, fields in sorted(external.items()):
-                package = fields["source"]
-                ref = fields.get("ref") or ""
-                label = f"{package}@{ref}" if ref else package
-                targets = [skill_dests[a] for a in agents_for(fields) if a in skill_dests]
-                if dry_run:
-                    log(f"would install external skill {name} from {label}")
-                    continue
-                assert fetch_root is not None
-                fetched = fetch_external_skill(package, name, ref, fetch_root)
-                if fetched is None:
-                    continue
-                for dest in targets:
-                    dest.mkdir(parents=True, exist_ok=True)
-                    target = dest / name
-                    if target.exists():
-                        shutil.rmtree(target)
-                    shutil.copytree(fetched, target)
-                log(f"installed external skill {name} from {label}")
-        finally:
-            if fetch_root is not None:
-                shutil.rmtree(fetch_root, ignore_errors=True)
+    for skill in repo_skills:
+        fields = registry.get(skill.name, {})
+        for label in agents_for(fields):
+            if label not in skill_dests:
+                continue
+            copy_skill_tree(skill, skill_dests[label] / skill.name, dry_run)
 
     prompts = AGENTS_DIR / "prompts"
     if has_real_files(prompts):
@@ -571,7 +620,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- status (was skill-doctor report) -------------------------------------
+# --- status ---------------------------------------------------------------
 
 def list_installed() -> dict[str, dict[str, Path | None]]:
     result: dict[str, dict[str, Path | None]] = {}
@@ -782,51 +831,27 @@ def build_report() -> dict:
         repo_names.add(skill.name)
         path = skill / "SKILL.md"
         repo_hash = hash_file(path) if path.is_file() else None
+        fields = registry.get(skill.name, {})
         where = {}
-        for label in SYNCED:
-            entries = copies[label]
+        for label in agents_for(fields):
+            entries = copies.get(label, {})
             if skill.name not in entries:
                 where[label] = "missing"
             elif entries[skill.name] is None:
                 where[label] = "hollow"
             else:
                 where[label] = "ok" if hash_file(entries[skill.name]) == repo_hash else "drift"
-        entry = registry.get(skill.name, {})
         skills.append({
             "name": skill.name,
-            "status": entry.get("status", "unregistered"),
-            "source": entry.get("source") or None,
+            "status": fields.get("status", "unregistered"),
+            "source": fields.get("source") or None,
+            "ref": fields.get("ref") or None,
             "problems": find_problems(skill),
             "hash": repo_hash,
             "copies": where,
             "evals": (skill / "evals").is_dir(),
             **summarize_usage(skill.name),
         })
-
-    for name, fields in sorted(registry.items()):
-        if not is_external(fields) or name in repo_names:
-            continue
-        where = {}
-        for label in agents_for(fields):
-            entries = copies.get(label, {})
-            if name not in entries:
-                where[label] = "missing"
-            elif entries[name] is None:
-                where[label] = "hollow"
-            else:
-                where[label] = "ok"
-        skills.append({
-            "name": name,
-            "status": fields.get("status", "unregistered"),
-            "source": fields.get("source"),
-            "ref": fields.get("ref") or None,
-            "problems": [],
-            "hash": None,
-            "copies": where,
-            "evals": False,
-            **summarize_usage(name),
-        })
-        repo_names.add(name)
 
     orphans = []
     for label, entries in copies.items():
@@ -850,6 +875,7 @@ def build_report() -> dict:
     }
     return {
         "host": os.uname().nodename,
+        "entrypoint": str(AGENTS_DIR),
         "logs": logs,
         "dormant_after_days": DORMANT_DAYS,
         "skills": skills,
@@ -858,7 +884,7 @@ def build_report() -> dict:
 
 
 def print_report(rep: dict) -> None:
-    print(f"{PROG} on {rep['host']}: {len(rep['skills'])} skills in registry / {SKILLS_DIR}")
+    print(f"{PROG} on {rep['host']}: {len(rep['skills'])} skills in {rep['entrypoint']}")
     print("logs:")
     for agent, loginfo in rep["logs"].items():
         window = f"{loginfo['first']} .. {loginfo['last']}" if loginfo["files"] else "no logs"
@@ -882,7 +908,7 @@ def print_report(rep: dict) -> None:
         for o in rep["orphans"]:
             tags = [o["agent"]] + (["kept"] if o["kept"] else [])
             tags += (["no SKILL.md"] if o["hollow"] else [])
-            tags += ["skills-cli moves it"] if o["pruned"] else []
+            tags += ["skill-cli moves it"] if o["pruned"] else []
             print(
                 f"  {o['name']:22} {o['usage']:8} {o['total']:>5}  "
                 f"{o['last_used'] or '-':10}  {', '.join(tags)}"
@@ -909,7 +935,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     evals = SKILLS_DIR / args.name / "evals"
     runner = evals / "run"
     if not (SKILLS_DIR / args.name / "SKILL.md").is_file():
-        print(f"{PROG}: no repo skill named {args.name!r}", file=sys.stderr)
+        print(f"{PROG}: no skill named {args.name!r}", file=sys.stderr)
         return 2
     if not os.access(runner, os.X_OK):
         print(f"{PROG}: {runner} is missing or not executable", file=sys.stderr)
@@ -925,9 +951,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog=PROG, description=__doc__.split("\n\n")[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument(
+        "--entrypoint",
+        help="path to the repo agents/ folder (overrides config and env)",
+    )
     sub = parser.add_subparsers(dest="command")
 
-    sync = sub.add_parser("sync", help="copy repo + external skills and agent config")
+    sync = sub.add_parser("sync", help="copy agents/skills and agent config to local dirs")
     sync.add_argument("--dry-run", action="store_true")
 
     status = sub.add_parser("status", help="report usage, drift, orphans")
@@ -938,13 +968,10 @@ def build_parser() -> argparse.ArgumentParser:
     reg = sub.add_parser("registry", help="regenerate skills.yaml from SKILL.md files")
     reg.add_argument("--check", action="store_true", help="check only; write nothing")
 
-    add = sub.add_parser("add", help="register a repo or external skill")
-    add.add_argument(
-        "tokens", nargs="+",
-        help="NAME  or  PACKAGE SKILL[#REF]",
-    )
+    add = sub.add_parser("add", help="create a local skill or vendor an external one")
+    add.add_argument("tokens", nargs="+", help="NAME  or  PACKAGE SKILL[#REF]")
 
-    rem = sub.add_parser("remove", help="drop a registry entry")
+    rem = sub.add_parser("remove", help="delete skill folder + registry entry (repo only)")
     rem.add_argument("name")
 
     ev = sub.add_parser("eval", help="run a skill's local evals/run")
@@ -957,8 +984,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    configure(resolve_entrypoint(args.entrypoint))
     if args.command is None:
-        # Default to status so `skills-cli` alone still reports, like skill-doctor.
         return cmd_status(argparse.Namespace(json=False))
     handlers = {
         "sync": cmd_sync,

@@ -1,4 +1,4 @@
-"""Exercise skills-cli sync without touching the user's agent configuration."""
+"""Exercise skill-cli sync without touching the user's agent configuration."""
 
 import os
 from pathlib import Path
@@ -8,13 +8,13 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills-cli"
+SCRIPT = Path(__file__).resolve().parents[1] / "skill-cli"
 HOME_VARS = ("AGENTS_HOME", "CODEX_HOME", "CLAUDE_HOME", "GROK_HOME", "PI_HOME")
 XDG_VARS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME")
 SKILL_HOMES = (".agents", ".codex", ".claude", ".grok")
 
 
-class SkillsCliSyncTests(unittest.TestCase):
+class SkillCliSyncTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -22,28 +22,27 @@ class SkillsCliSyncTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.home = self.root / "home"
         self.home.mkdir()
-        self.script = self.repo / ".agents/skills-cli"
+        self.entry = self.repo / "agents"
+        self.script = self.entry / "skill-cli/skill-cli"
         self.script.parent.mkdir(parents=True)
         shutil.copy2(SCRIPT, self.script)
-        self.skill = self.repo / ".agents/skills/example/SKILL.md"
+        self.skill = self.entry / "skills/example/SKILL.md"
         self.skill.parent.mkdir(parents=True)
         self.skill.write_text("---\nname: example\ndescription: Test skill\n---\n")
-        # Minimal registry so external lookups work; sync itself keys off folders.
-        (self.repo / ".agents/skills.yaml").write_text(
+        (self.entry / "skills.yaml").write_text(
             '- name: "example"\n  description: "Test skill"\n'
             '  status: "active"\n  purpose: ""\n'
         )
         config = self.repo / ".pi/web-search.json"
         config.parent.mkdir()
         config.write_text("{}\n")
-        self.env = {k: v for k, v in os.environ.items() if k not in HOME_VARS + XDG_VARS}
+        self.env = {k: v for k, v in os.environ.items() if k not in HOME_VARS + XDG_VARS + ("SKILL_CLI_ENTRYPOINT",)}
         self.env["HOME"] = str(self.home)
-        # Keep uv's cache out of the fake HOME so dry-run emptiness checks stay clean.
+        self.env["SKILL_CLI_ENTRYPOINT"] = str(self.entry)
         cache = self.root / "uv-cache"
         cache.mkdir()
         self.env["UV_CACHE_DIR"] = str(cache)
         self.env["XDG_CACHE_HOME"] = str(cache)
-        self.npx_log = self.root / "npx.log"
 
     def run_sync(self, *args, check=True):
         result = subprocess.run(
@@ -88,6 +87,37 @@ class SkillsCliSyncTests(unittest.TestCase):
         self.assertNotIn(str(self.home / ".pi/agent/skills"), output)
         self.assertEqual(list(self.home.iterdir()), [])
 
+    def test_entrypoint_flag_overrides_env(self):
+        other = self.root / "other/agents"
+        other.mkdir(parents=True)
+        (other / "skills/other/SKILL.md").parent.mkdir(parents=True)
+        (other / "skills/other/SKILL.md").write_text(
+            "---\nname: other\ndescription: Other\n---\n"
+        )
+        (other / "skills.yaml").write_text(
+            '- name: "other"\n  description: "Other"\n  status: "active"\n  purpose: ""\n'
+        )
+        result = subprocess.run(
+            ["uv", "run", "--script", str(self.script), "--entrypoint", str(other), "sync"],
+            env=self.env, check=True, capture_output=True, text=True,
+        )
+        self.assertTrue((self.home / ".agents/skills/other/SKILL.md").is_file())
+        self.assertFalse((self.home / ".agents/skills/example").exists())
+        self.assertIn(str(other), result.stdout)
+
+    def test_missing_entrypoint_explains_config(self):
+        env = dict(self.env)
+        del env["SKILL_CLI_ENTRYPOINT"]
+        env["XDG_CONFIG_HOME"] = str(self.root / "cfg")
+        result = subprocess.run(
+            ["uv", "run", "--script", str(self.script), "sync"],
+            env=env, check=False, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no entrypoint configured", result.stderr)
+        self.assertIn("config.toml", result.stderr)
+        self.assertIn('entrypoint =', result.stderr)
+
     def make_skill(self, home, name, text="local\n"):
         path = self.home / home / "skills" / name / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +144,7 @@ class SkillsCliSyncTests(unittest.TestCase):
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
     def test_kept_hidden_and_plain_entries_survive(self):
-        keep = self.home / ".config/skills/keep-skills"
+        keep = self.home / ".config/skill-cli/keep-skills"
         keep.parent.mkdir(parents=True)
         keep.write_bytes(b"# local-only skills\r\n\r\n  mine \r\n\n")
         kept = self.make_skill(".claude", "mine")
@@ -182,121 +212,55 @@ class SkillsCliSyncTests(unittest.TestCase):
         self.assertNotIn("stale skill", output)
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
-    def use_fake_npx(self, fail=False):
-        bin_dir = self.root / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        npx = bin_dir / "npx"
-        npx.write_text(
-            "#!/bin/sh\n"
-            f'echo "$DISABLE_TELEMETRY $DO_NOT_TRACK $*" >> "{self.npx_log}"\n'
-            + ("exit 1\n" if fail else "")
-            + 'mkdir -p ".agents/skills/$6"\n'
-            'echo "fetched $4" > ".agents/skills/$6/SKILL.md"\n'
+    def vendor_external(self, name="tool", body="vendored\n", source="owner/repo", ref=""):
+        dest = self.entry / "skills" / name
+        dest.mkdir(parents=True)
+        (dest / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Vendored {name}\n---\n{body}"
         )
-        npx.chmod(0o755)
-        self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
-
-    def register_external(self, package, skill_spec):
-        """Append an external skill to the throwaway registry."""
-        name = skill_spec.split("#", 1)[0]
-        ref = skill_spec.split("#", 1)[1] if "#" in skill_spec else ""
-        registry = self.repo / ".agents/skills.yaml"
+        registry = self.entry / "skills.yaml"
         registry.write_text(
             registry.read_text()
             + f'- name: "{name}"\n'
-            f'  description: ""\n'
+            f'  description: "Vendored {name}"\n'
             f'  status: "active"\n'
             f'  purpose: ""\n'
-            f'  source: "{package}"\n'
+            f'  source: "{source}"\n'
             f'  ref: "{ref}"\n'
         )
 
-    def npx_calls(self):
-        return self.npx_log.read_text().splitlines() if self.npx_log.exists() else []
-
-    def test_external_skill_is_copied_to_every_skill_home(self):
-        self.use_fake_npx()
-        self.register_external("owner/repo", "tool")
+    def test_vendored_external_skill_is_copied_like_any_other(self):
+        self.vendor_external()
         output = self.run_sync()
-        self.assertEqual(
-            self.npx_calls(), ["1 1 -y skills add owner/repo --skill tool --copy -y"]
-        )
         for home in SKILL_HOMES:
-            self.assertEqual(
-                (self.home / home / "skills/tool/SKILL.md").read_text(),
-                "fetched owner/repo\n",
-            )
-        self.assertIn("installed external skill tool from owner/repo\n", output)
+            text = (self.home / home / "skills/tool/SKILL.md").read_text()
+            self.assertIn("vendored", text)
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
+        self.assertIn("entrypoint:", output)
 
-    def test_pinned_ref_is_passed_to_the_cli(self):
-        self.use_fake_npx()
-        self.register_external("owner/repo", "tool#v1.2")
-        output = self.run_sync()
-        self.assertEqual(
-            self.npx_calls(),
-            ["1 1 -y skills add owner/repo#v1.2 --skill tool --copy -y"],
-        )
-        self.assertIn("installed external skill tool from owner/repo@v1.2\n", output)
-
-    def test_prune_keeps_external_skill(self):
-        self.use_fake_npx()
-        self.register_external("owner/repo", "tool")
+    def test_prune_keeps_vendored_external_skill(self):
+        self.vendor_external()
         self.make_skill(".claude", "tool", "old\n")
         self.run_sync()
         self.assertEqual(self.removed_dirs(), [])
-        self.assertEqual(
-            (self.home / ".claude/skills/tool/SKILL.md").read_text(),
-            "fetched owner/repo\n",
-        )
-
-    def test_fetch_failure_keeps_installed_copy(self):
-        self.use_fake_npx(fail=True)
-        self.register_external("owner/repo", "tool")
-        kept = self.make_skill(".grok", "tool", "old\n")
-        result = self.run_sync(check=False)
-        self.assertEqual(result.returncode, 0)
         self.assertIn(
-            "could not fetch external skill tool from owner/repo", result.stderr
+            "vendored",
+            (self.home / ".claude/skills/tool/SKILL.md").read_text(),
         )
-        self.assertEqual(kept.read_text(), "old\n")
-        self.assertEqual(self.removed_dirs(), [])
-        self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
-    def test_missing_npx_skips_external_skill(self):
+    def test_sync_does_not_call_npx(self):
+        """Sync only copies vendored skills; fetch happens at add time."""
+        self.vendor_external()
         bin_dir = self.root / "no-npx"
         bin_dir.mkdir()
         for tool in ("uv", "python3", "mkdir", "cp", "mv", "rm"):
             which = shutil.which(tool)
             if which:
                 (bin_dir / tool).symlink_to(which)
-        # Also need the real uv's interpreter resolution; put system bins last.
         self.env["PATH"] = f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"
-        self.register_external("owner/repo", "tool")
-        kept = self.make_skill(".agents", "tool", "old\n")
         result = self.run_sync(check=False)
         self.assertEqual(result.returncode, 0)
-        self.assertIn("npx not found; skipped external skill tool", result.stderr)
-        self.assertEqual(kept.read_text(), "old\n")
-
-    def test_external_skill_colliding_with_repo_skill_aborts(self):
-        self.use_fake_npx()
-        self.register_external("owner/repo", "example")
-        result = self.run_sync(check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("external skill 'example' collides with", result.stderr)
-        self.assertEqual(self.npx_calls(), [])
-        self.assertEqual(list(self.home.iterdir()), [])
-
-    def test_dry_run_reports_external_skill_without_fetching(self):
-        self.use_fake_npx()
-        self.register_external("owner/repo", "tool#main")
-        output = self.run_sync("--dry-run")
-        self.assertIn(
-            "would install external skill tool from owner/repo@main\n", output
-        )
-        self.assertEqual(self.npx_calls(), [])
-        self.assertEqual(list(self.home.iterdir()), [])
+        self.assertTrue((self.home / ".agents/skills/tool/SKILL.md").is_file())
 
 
 if __name__ == "__main__":
