@@ -36,3 +36,15 @@ External skills are registry-only (`source.url` + `source.pin` as a 40-char comm
 ```
 python3 -m unittest discover -s agents/skill-cli/tests -v
 ```
+
+## Layout
+
+```
+agents/skill-cli/
+  skill-cli           # PEP 723 uv-script entrypoint (shebang + imports main)
+  skill_cli/          # package: console, paths, skills, fetch, registry, sync, usage, status, cli
+  tests/
+```
+
+The `skill-cli` script cannot be copied alone — it imports the adjacent `skill_cli/` package (a symlink to the script is fine; the package must sit next to the real file).
+
