@@ -86,10 +86,6 @@ def resolve_xdg_config() -> Path:
     return resolve_home_var("XDG_CONFIG_HOME", ".config")
 
 
-def resolve_xdg_data() -> Path:
-    return resolve_home_var("XDG_DATA_HOME", ".local/share")
-
-
 def resolve_xdg_cache() -> Path:
     return resolve_home_var("XDG_CACHE_HOME", ".cache")
 
