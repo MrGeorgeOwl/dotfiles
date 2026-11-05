@@ -21,7 +21,7 @@ uv run --script agents/skill-cli/skill-cli sync --dry-run
 uv run --script agents/skill-cli/skill-cli status
 ```
 
-`add` / `remove` edit this repo only. `sync` updates local agent dirs.
+`add` / `remove` edit this repo only. `sync` adds/updates local agent dirs; never deletes local-only skills.
 
 ## Merge the latest base into the current branch
 

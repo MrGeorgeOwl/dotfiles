@@ -10,7 +10,7 @@
   skill-cli check                     lint skills.yaml (for tests/CI)
   skill-cli registry                  regenerate skills.yaml; keep human fields
   skill-cli add NAME                  create agents/skills/NAME + register
-  skill-cli add NAME --source URL --pin REF [--path SUB]
+  skill-cli add NAME --source URL --pin SHA [--path SUB]
                                   register an external skill (git fetch at sync)
   skill-cli remove NAME               delete folder + registry entry (repo only)
   skill-cli eval NAME [args]          run skills/NAME/evals/run with SKILL_DIR set
@@ -19,7 +19,8 @@ Config: ${XDG_CONFIG_HOME:-~/.config}/skill-cli/config.toml
   entrypoint = "/path/to/dotfiles/agents"
 
 Override with --entrypoint or SKILL_CLI_ENTRYPOINT. OS-agnostic (macOS + Linux).
-Copies files; never symlinks. Only sync changes local agent dirs.
+Copies files; never symlinks. Only sync changes local agent dirs (add/update only;
+never deletes local skills that are not in the repo).
 External skills live in skills.yaml under source.url / source.pin [/ source.path];
 fetched into ${XDG_CACHE_HOME:-~/.cache}/skill-cli/ and never vendored into the repo.
 """
@@ -37,9 +38,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-import time
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 PROG = "skill-cli"
@@ -52,66 +52,61 @@ DORMANT_DAYS = 60
 SYNCED = ("agents", "codex", "claude", "grok")
 OBSERVED = ("pi", "omp")
 
-# Set by configure() after entrypoint resolution.
-AGENTS_DIR: Path
-REPO_ROOT: Path
-SKILLS_DIR: Path
-REGISTRY: Path
+
+@dataclass(frozen=True)
+class Paths:
+    agents_dir: Path
+    repo_root: Path
+    skills_dir: Path
+    registry: Path
+
+    @classmethod
+    def from_entrypoint(cls, entrypoint: Path) -> Paths:
+        if not entrypoint.is_dir():
+            die(f"entrypoint is not a directory: {entrypoint}")
+        return cls(
+            agents_dir=entrypoint,
+            repo_root=entrypoint.parent,
+            skills_dir=entrypoint / "skills",
+            registry=entrypoint / "skills.yaml",
+        )
+
+
+class FetchError(Exception):
+    """External skill fetch or resolve failed; sync continues past these."""
 
 
 # --- paths ----------------------------------------------------------------
 
-def home() -> Path:
-    return Path.home()
+def resolve_home_var(var: str, default: str) -> Path:
+    return Path(os.environ[var]) if os.environ.get(var) else Path.home() / default
 
 
-def resolve_home(var: str, default: str) -> Path:
-    return Path(os.environ[var]) if os.environ.get(var) else home() / default
+def resolve_xdg_config() -> Path:
+    return resolve_home_var("XDG_CONFIG_HOME", ".config")
 
 
-def xdg_config() -> Path:
-    return resolve_home("XDG_CONFIG_HOME", ".config")
+def resolve_xdg_data() -> Path:
+    return resolve_home_var("XDG_DATA_HOME", ".local/share")
 
 
-def xdg_data() -> Path:
-    return resolve_home("XDG_DATA_HOME", ".local/share")
+def resolve_xdg_cache() -> Path:
+    return resolve_home_var("XDG_CACHE_HOME", ".cache")
 
 
-def xdg_cache() -> Path:
-    return resolve_home("XDG_CACHE_HOME", ".cache")
-
-
-def config_dir() -> Path:
-    return xdg_config() / "skill-cli"
+def resolve_config_dir() -> Path:
+    return resolve_xdg_config() / "skill-cli"
 
 
 def list_skill_roots() -> dict[str, Path]:
     return {
-        "agents": resolve_home("AGENTS_HOME", ".agents") / "skills",
-        "codex": resolve_home("CODEX_HOME", ".codex") / "skills",
-        "claude": resolve_home("CLAUDE_HOME", ".claude") / "skills",
-        "grok": resolve_home("GROK_HOME", ".grok") / "skills",
-        "pi": resolve_home("PI_HOME", ".pi") / "agent/skills",
-        "omp": home() / ".omp/agent/skills",
+        "agents": resolve_home_var("AGENTS_HOME", ".agents") / "skills",
+        "codex": resolve_home_var("CODEX_HOME", ".codex") / "skills",
+        "claude": resolve_home_var("CLAUDE_HOME", ".claude") / "skills",
+        "grok": resolve_home_var("GROK_HOME", ".grok") / "skills",
+        "pi": resolve_home_var("PI_HOME", ".pi") / "agent/skills",
+        "omp": Path.home() / ".omp/agent/skills",
     }
-
-
-def keep_list_paths() -> list[Path]:
-    """New path first; fall back to older locations."""
-    return [
-        config_dir() / "keep-skills",
-        xdg_config() / "skills/keep-skills",
-        xdg_config() / "agent-sync/keep-skills",
-    ]
-
-
-def read_keep_list() -> set[str]:
-    for path in keep_list_paths():
-        if not path.is_file():
-            continue
-        lines = (line.strip() for line in path.read_text(errors="replace").splitlines())
-        return {line for line in lines if line and not line.startswith("#")}
-    return set()
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -127,9 +122,9 @@ def warn(msg: str) -> None:
     print(f"{PROG}: warning: {msg}", file=sys.stderr)
 
 
-def config_example(path_hint: str) -> str:
+def format_config_example(path_hint: str) -> str:
     return (
-        f"Create {config_dir() / 'config.toml'} with:\n"
+        f"Create {resolve_config_dir() / 'config.toml'} with:\n"
         f'  entrypoint = "{path_hint}"\n'
         "Or pass --entrypoint PATH / set SKILL_CLI_ENTRYPOINT."
     )
@@ -141,7 +136,7 @@ def resolve_entrypoint(cli_value: str | None) -> Path:
     env = os.environ.get("SKILL_CLI_ENTRYPOINT")
     if env:
         return Path(env).expanduser().resolve()
-    cfg = config_dir() / "config.toml"
+    cfg = resolve_config_dir() / "config.toml"
     if cfg.is_file():
         try:
             data = tomllib.loads(cfg.read_text())
@@ -150,21 +145,11 @@ def resolve_entrypoint(cli_value: str | None) -> Path:
         ep = data.get("entrypoint")
         if isinstance(ep, str) and ep.strip():
             return Path(ep).expanduser().resolve()
-        die(f"{cfg} has no entrypoint string\n{config_example('~/code/dotfiles/agents')}")
+        die(f"{cfg} has no entrypoint string\n{format_config_example('~/code/dotfiles/agents')}")
     die(
         "no entrypoint configured\n"
-        + config_example("~/code/dotfiles/agents")
+        + format_config_example("~/code/dotfiles/agents")
     )
-
-
-def configure(entrypoint: Path) -> None:
-    global AGENTS_DIR, REPO_ROOT, SKILLS_DIR, REGISTRY
-    if not entrypoint.is_dir():
-        die(f"entrypoint is not a directory: {entrypoint}")
-    AGENTS_DIR = entrypoint
-    REPO_ROOT = entrypoint.parent
-    SKILLS_DIR = entrypoint / "skills"
-    REGISTRY = entrypoint / "skills.yaml"
 
 
 # --- SKILL.md / registry --------------------------------------------------
@@ -187,14 +172,16 @@ def hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
 
 
-def quote(value: object) -> str:
+def format_yaml_value(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def list_repo_skills() -> list[Path]:
-    if not SKILLS_DIR.is_dir():
+def list_repo_skills(paths: Paths) -> list[Path]:
+    if not paths.skills_dir.is_dir():
         return []
-    return sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir() and not p.name.startswith("."))
+    return sorted(
+        p for p in paths.skills_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
+    )
 
 
 def find_problems(skill_dir: Path) -> list[str]:
@@ -214,7 +201,7 @@ def find_problems(skill_dir: Path) -> list[str]:
     return found
 
 
-def read_registry() -> dict[str, dict]:
+def read_registry(paths: Paths) -> dict[str, dict]:
     """Parse the list-of-mappings YAML that render_registry writes.
 
     Supports one level of nesting for `source:` (url / pin / path).
@@ -222,9 +209,9 @@ def read_registry() -> dict[str, dict]:
     entries: dict[str, dict] = {}
     current: dict | None = None
     nest: dict | None = None
-    if not REGISTRY.is_file():
+    if not paths.registry.is_file():
         return entries
-    for line in REGISTRY.read_text().splitlines():
+    for line in paths.registry.read_text().splitlines():
         nest_match = re.match(r"^    (\w+):(?: (.*))?$", line)
         if nest_match and nest is not None:
             key, raw = nest_match.group(1), nest_match.group(2)
@@ -258,7 +245,7 @@ def read_registry() -> dict[str, dict]:
     return entries
 
 
-def source_info(fields: dict) -> dict | None:
+def read_source(fields: dict) -> dict | None:
     """Return the external source mapping, or None for a local skill."""
     src = fields.get("source")
     if isinstance(src, dict) and src.get("url"):
@@ -266,24 +253,20 @@ def source_info(fields: dict) -> dict | None:
     return None
 
 
-def is_external(fields: dict) -> bool:
-    return source_info(fields) is not None
-
-
 def render_source_lines(source: dict) -> list[str]:
     lines = [
         "  source:",
-        f"    url: {quote(source.get('url') or '')}",
-        f"    pin: {quote(source.get('pin') or '')}",
+        f"    url: {format_yaml_value(source.get('url') or '')}",
+        f"    pin: {format_yaml_value(source.get('pin') or '')}",
     ]
     path = source.get("path") or ""
     if path:
-        lines.append(f"    path: {quote(path)}")
+        lines.append(f"    path: {format_yaml_value(path)}")
     return lines
 
 
-def render_registry(old: dict[str, dict] | None = None) -> str:
-    old = old if old is not None else read_registry()
+def render_registry(paths: Paths, old: dict[str, dict] | None = None) -> str:
+    old = old if old is not None else read_registry(paths)
     out = [
         "# Shared agent skills. Generated by `skill-cli registry`.",
         "# Edit status, purpose, source, agents.",
@@ -292,28 +275,27 @@ def render_registry(old: dict[str, dict] | None = None) -> str:
         "# they are NOT stored under agents/skills/ — sync fetches them into cache.",
     ]
     emitted: set[str] = set()
-    for skill in list_repo_skills():
+    for skill in list_repo_skills(paths):
         if not (skill / "SKILL.md").is_file():
             continue
         name = skill.name
         human = old.get(name, {})
         desc = read_frontmatter(skill / "SKILL.md").get("description", "")
         out += [
-            f"- name: {quote(name)}",
-            f"  description: {quote(desc)}",
-            f"  status: {quote(human.get('status') or 'active')}",
-            f"  purpose: {quote(human.get('purpose') or '')}",
+            f"- name: {format_yaml_value(name)}",
+            f"  description: {format_yaml_value(desc)}",
+            f"  status: {format_yaml_value(human.get('status') or 'active')}",
+            f"  purpose: {format_yaml_value(human.get('purpose') or '')}",
         ]
-        # Local folders are local skills; drop any stale source block.
         agents = human.get("agents")
         if agents:
-            out.append(f"  agents: {quote(agents)}")
+            out.append(f"  agents: {format_yaml_value(agents)}")
         emitted.add(name)
 
     for name, fields in sorted(old.items()):
         if name in emitted:
             continue
-        src = source_info(fields)
+        src = read_source(fields)
         if not src:
             continue
         desc = fields.get("description") or ""
@@ -321,28 +303,28 @@ def render_registry(old: dict[str, dict] | None = None) -> str:
         if cached is not None:
             desc = read_frontmatter(cached / "SKILL.md").get("description", desc)
         out += [
-            f"- name: {quote(name)}",
-            f"  description: {quote(desc)}",
-            f"  status: {quote(fields.get('status') or 'experimental')}",
-            f"  purpose: {quote(fields.get('purpose') or '')}",
+            f"- name: {format_yaml_value(name)}",
+            f"  description: {format_yaml_value(desc)}",
+            f"  status: {format_yaml_value(fields.get('status') or 'experimental')}",
+            f"  purpose: {format_yaml_value(fields.get('purpose') or '')}",
         ]
         out += render_source_lines(src)
         agents = fields.get("agents")
         if agents:
-            out.append(f"  agents: {quote(agents)}")
+            out.append(f"  agents: {format_yaml_value(agents)}")
         emitted.add(name)
     return "\n".join(out) + "\n"
 
 
-def find_registry_errors() -> list[str]:
+def find_registry_errors(paths: Paths) -> list[str]:
     errors: list[str] = []
-    registry = read_registry()
-    repo = {s.name: s for s in list_repo_skills()}
+    registry = read_registry(paths)
+    repo = {s.name: s for s in list_repo_skills(paths)}
     for name, skill in repo.items():
         errors += [f"{name}: {p}" for p in find_problems(skill)]
-        if is_external(registry.get(name, {})):
+        if read_source(registry.get(name, {})):
             errors.append(
-                f"{name}: external skill must not have {SKILLS_DIR.name}/{name}/; "
+                f"{name}: external skill must not have {paths.skills_dir.name}/{name}/; "
                 "remove the folder (sync fetches into cache)"
             )
     for name, fields in registry.items():
@@ -351,7 +333,9 @@ def find_registry_errors() -> list[str]:
         src = fields.get("source")
         if src is None or src == "":
             if name not in repo:
-                errors.append(f"{name}: listed in registry but no {SKILLS_DIR.name}/{name}/")
+                errors.append(
+                    f"{name}: listed in registry but no {paths.skills_dir.name}/{name}/"
+                )
             continue
         if not isinstance(src, dict):
             errors.append(f"{name}: source must be a mapping with url and pin")
@@ -362,35 +346,31 @@ def find_registry_errors() -> list[str]:
         if not pin:
             errors.append(f"{name}: source.pin missing")
         elif not SHA_RE.match(str(pin)):
-            warn(f"{name}: source.pin is not a 40-char commit SHA")
-        if name in repo:
-            pass  # already reported above
-        elif name not in repo and not is_external(fields):
-            errors.append(f"{name}: listed in registry but no {SKILLS_DIR.name}/{name}/")
+            errors.append(f"{name}: source.pin must be a 40-char commit SHA")
     for name, skill in repo.items():
         if name not in registry and (skill / "SKILL.md").is_file():
-            errors.append(f"{name}: missing from {REGISTRY.name}; run {PROG} registry")
-    if not REGISTRY.is_file() or REGISTRY.read_text() != render_registry(registry):
-        errors.append(f"{REGISTRY.name} is out of date; run {PROG} registry")
+            errors.append(f"{name}: missing from {paths.registry.name}; run {PROG} registry")
+    if not paths.registry.is_file() or paths.registry.read_text() != render_registry(paths, registry):
+        errors.append(f"{paths.registry.name} is out of date; run {PROG} registry")
     return errors
 
 
-def write_registry(old: dict[str, dict] | None = None) -> None:
-    REGISTRY.write_text(render_registry(old))
+def write_registry(paths: Paths, old: dict[str, dict] | None = None) -> None:
+    paths.registry.write_text(render_registry(paths, old))
 
 
-def cmd_registry(args: argparse.Namespace) -> int:
+def cmd_registry(paths: Paths, args: argparse.Namespace) -> int:
     if not args.check:
-        write_registry()
-        log(f"wrote {REGISTRY}")
-    errors = find_registry_errors()
+        write_registry(paths)
+        log(f"wrote {paths.registry}")
+    errors = find_registry_errors(paths)
     for error in errors:
         print(f"{PROG}: {error}", file=sys.stderr)
     return 1 if errors else 0
 
 
-def cmd_check(_args: argparse.Namespace) -> int:
-    return cmd_registry(argparse.Namespace(check=True))
+def cmd_check(paths: Paths, _args: argparse.Namespace) -> int:
+    return cmd_registry(paths, argparse.Namespace(check=True))
 
 
 # --- external fetch (git + XDG cache) ------------------------------------
@@ -417,24 +397,17 @@ def parse_git_url(url: str) -> tuple[str, str]:
     die(f"unrecognized git url: {url}")
 
 
-def cache_dir_for(url: str, pin: str) -> Path:
+def resolve_cache_dir(url: str, pin: str) -> Path:
     host, repo = parse_git_url(url)
     parts = Path(repo)
-    # ~/.cache/skill-cli/<host>/<owner>/.../<name>@<pin>
-    return xdg_cache() / "skill-cli" / host / parts.parent / f"{parts.name}@{pin}"
-
-
-def _git(cmd: list[str], cwd: Path | None, env: dict) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd, cwd=cwd, env=env, capture_output=True, text=True, check=False,
-    )
+    return resolve_xdg_cache() / "skill-cli" / host / parts.parent / f"{parts.name}@{pin}"
 
 
 def ensure_fetched(url: str, pin: str) -> Path:
     """Fetch url at pin into the XDG cache. Reuses cache when pin matches."""
     if shutil.which("git") is None:
-        die("git not found; required for external skills")
-    dest = cache_dir_for(url, pin)
+        raise FetchError("git not found; required for external skills")
+    dest = resolve_cache_dir(url, pin)
     marker = dest / ".skill-cli-pin"
     if marker.is_file() and marker.read_text().strip() == pin:
         return dest
@@ -445,38 +418,43 @@ def ensure_fetched(url: str, pin: str) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
 
     log(f"fetching {url}@{pin}")
-    init = _git(["git", "init"], dest, env)
-    if init.returncode != 0:
-        die(f"git init failed in {dest}: {init.stderr.strip()}")
-    _git(["git", "remote", "add", "origin", url], dest, env)
-    fetched = _git(["git", "fetch", "--depth", "1", "origin", pin], dest, env)
-    if fetched.returncode != 0:
-        # Some hosts refuse sha shallow fetch; fall back to full clone.
-        shutil.rmtree(dest)
-        clone = _git(["git", "clone", url, str(dest)], None, env)
-        if clone.returncode != 0:
-            die(
-                f"could not fetch {url}@{pin}: {fetched.stderr.strip() or clone.stderr.strip()}"
-            )
-        checked = _git(["git", "checkout", "--detach", pin], dest, env)
-        if checked.returncode != 0:
-            die(f"could not checkout {pin} in {url}: {checked.stderr.strip()}")
-    else:
-        checked = _git(["git", "checkout", "--detach", "FETCH_HEAD"], dest, env)
-        if checked.returncode != 0:
-            die(f"could not checkout FETCH_HEAD for {url}@{pin}: {checked.stderr.strip()}")
 
-    if SHA_RE.match(pin):
-        head = _git(["git", "rev-parse", "HEAD"], dest, env)
-        got = (head.stdout or "").strip()
-        if head.returncode != 0 or got != pin:
-            die(f"pin mismatch for {url}: wanted {pin}, got {got or 'unknown'}")
+    def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+
+    init = run(["git", "init"], dest)
+    if init.returncode != 0:
+        raise FetchError(f"git init failed in {dest}: {init.stderr.strip()}")
+    run(["git", "remote", "add", "origin", url], dest)
+    fetched = run(["git", "fetch", "--depth", "1", "origin", pin], dest)
+    if fetched.returncode != 0:
+        shutil.rmtree(dest)
+        clone = run(["git", "clone", url, str(dest)])
+        if clone.returncode != 0:
+            raise FetchError(
+                f"could not fetch {url}@{pin}: "
+                f"{fetched.stderr.strip() or clone.stderr.strip()}"
+            )
+        checked = run(["git", "checkout", "--detach", pin], dest)
+        if checked.returncode != 0:
+            raise FetchError(f"could not checkout {pin} in {url}: {checked.stderr.strip()}")
+    else:
+        checked = run(["git", "checkout", "--detach", "FETCH_HEAD"], dest)
+        if checked.returncode != 0:
+            raise FetchError(
+                f"could not checkout FETCH_HEAD for {url}@{pin}: {checked.stderr.strip()}"
+            )
+
+    head = run(["git", "rev-parse", "HEAD"], dest)
+    got = (head.stdout or "").strip()
+    if head.returncode != 0 or got != pin:
+        raise FetchError(f"pin mismatch for {url}: wanted {pin}, got {got or 'unknown'}")
 
     marker.write_text(pin + "\n")
     return dest
 
 
-def resolve_skill_subdir(root: Path, name: str, subpath: str) -> Path:
+def resolve_skill_subdir(root: Path, name: str, subpath: str) -> Path | None:
     candidates: list[Path] = []
     if subpath:
         candidates.append(root / subpath)
@@ -486,8 +464,7 @@ def resolve_skill_subdir(root: Path, name: str, subpath: str) -> Path:
     for candidate in candidates:
         if (candidate / "SKILL.md").is_file():
             return candidate
-    where = f" path={subpath}" if subpath else ""
-    die(f"{name}: no SKILL.md under {root}{where}")
+    return None
 
 
 def peek_external_skill_dir(name: str, source: dict) -> Path | None:
@@ -496,31 +473,36 @@ def peek_external_skill_dir(name: str, source: dict) -> Path | None:
     pin = source.get("pin") or ""
     if not url or not pin:
         return None
-    dest = cache_dir_for(url, pin)
+    dest = resolve_cache_dir(url, pin)
     marker = dest / ".skill-cli-pin"
     if not marker.is_file() or marker.read_text().strip() != pin:
         return None
-    subpath = source.get("path") or ""
-    try:
-        return resolve_skill_subdir(dest, name, subpath)
-    except SystemExit:
-        return None
+    return resolve_skill_subdir(dest, name, source.get("path") or "")
 
 
-def external_skill_dir(name: str, source: dict, *, fetch: bool) -> Path:
+def resolve_external_skill_dir(name: str, source: dict, *, fetch: bool) -> Path:
     """Resolve the directory that contains SKILL.md for an external skill."""
     if not source.get("url"):
-        die(f"{name}: source.url missing")
+        raise FetchError(f"{name}: source.url missing")
     if not source.get("pin"):
-        die(f"{name}: source.pin missing")
+        raise FetchError(f"{name}: source.pin missing")
+    if not SHA_RE.match(str(source["pin"])):
+        raise FetchError(f"{name}: source.pin must be a 40-char commit SHA")
     if fetch:
         root = ensure_fetched(source["url"], source["pin"])
     else:
-        root = cache_dir_for(source["url"], source["pin"])
+        root = resolve_cache_dir(source["url"], source["pin"])
         marker = root / ".skill-cli-pin"
         if not marker.is_file() or marker.read_text().strip() != source["pin"]:
-            die(f"{name}: not in cache; run sync (or add) to fetch {source['url']}@{source['pin']}")
-    return resolve_skill_subdir(root, name, source.get("path") or "")
+            raise FetchError(
+                f"{name}: not in cache; run sync (or add) to fetch "
+                f"{source['url']}@{source['pin']}"
+            )
+    found = resolve_skill_subdir(root, name, source.get("path") or "")
+    if found is None:
+        where = f" path={source.get('path')}" if source.get("path") else ""
+        raise FetchError(f"{name}: no SKILL.md under {root}{where}")
+    return found
 
 
 # --- add / remove (repo only) ---------------------------------------------
@@ -537,8 +519,8 @@ Describe what this skill does.
 """
 
 
-def cmd_add(args: argparse.Namespace) -> int:
-    registry = read_registry()
+def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
+    registry = read_registry(paths)
     name = args.name
     if not NAME_RE.match(name) or len(name) > 64:
         die(f"skill name must be lowercase-hyphen, <= 64 chars: {name!r}")
@@ -546,32 +528,37 @@ def cmd_add(args: argparse.Namespace) -> int:
     if args.source:
         if not args.pin:
             die("--pin is required with --source")
-        source = {"url": args.source, "pin": args.pin}
-        if args.path:
-            source["path"] = args.path
-        content = external_skill_dir(name, source, fetch=True)
-        desc = read_frontmatter(content / "SKILL.md").get("description", "")
-        skill_dir = SKILLS_DIR / name
+        if not SHA_RE.match(args.pin):
+            die("--pin must be a 40-char commit SHA")
+        skill_dir = paths.skills_dir / name
         if skill_dir.exists():
             die(
                 f"{name} has a local folder at {skill_dir}; "
                 "remove it first — external skills are registry-only"
             )
+        source = {"url": args.source, "pin": args.pin}
+        if args.path:
+            source["path"] = args.path
+        try:
+            content = resolve_external_skill_dir(name, source, fetch=True)
+        except FetchError as exc:
+            die(str(exc))
+        desc = read_frontmatter(content / "SKILL.md").get("description", "")
         entry = registry.get(name, {})
         entry["status"] = entry.get("status") or "experimental"
         entry["purpose"] = entry.get("purpose") or f"External: {args.source}."
         entry["description"] = desc
         entry["source"] = source
         registry[name] = entry
-        write_registry(registry)
+        write_registry(paths, registry)
         log(f"registered external {name} from {args.source}@{args.pin}")
         return 0
 
     if args.pin or args.path:
         die("--pin/--path require --source")
 
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    skill_dir = SKILLS_DIR / name
+    paths.skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir = paths.skills_dir / name
     skill_md = skill_dir / "SKILL.md"
     created = False
     if not skill_md.is_file():
@@ -587,16 +574,16 @@ def cmd_add(args: argparse.Namespace) -> int:
     if created:
         entry.pop("source", None)
     registry[name] = entry
-    write_registry(registry)
+    write_registry(paths, registry)
     log(f"registered {name}")
     return 0
 
 
-def cmd_remove(args: argparse.Namespace) -> int:
+def cmd_remove(paths: Paths, args: argparse.Namespace) -> int:
     """Delete the skill folder (if local) and registry entry. Never touches local agent dirs."""
-    registry = read_registry()
+    registry = read_registry(paths)
     name = args.name
-    skill_dir = SKILLS_DIR / name
+    skill_dir = paths.skills_dir / name
     if name not in registry and not skill_dir.exists():
         die(f"{name!r} is not in the registry and has no folder", code=2)
     if skill_dir.exists():
@@ -604,8 +591,8 @@ def cmd_remove(args: argparse.Namespace) -> int:
         log(f"deleted {skill_dir}")
     if name in registry:
         del registry[name]
-        write_registry(registry)
-        log(f"removed {name} from {REGISTRY.name}")
+        write_registry(paths, registry)
+        log(f"removed {name} from {paths.registry.name}")
     return 0
 
 
@@ -628,14 +615,13 @@ def copy_path(src: Path, dest: Path, dry_run: bool) -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(src, dest)
+        shutil.copytree(src, dest, dirs_exist_ok=True)
     else:
         shutil.copy2(src, dest)
 
 
 def copy_dir_contents(src: Path, dest: Path, dry_run: bool, skip: str | None = None) -> None:
+    """Merge src into dest. Destination-only files and dirs are kept."""
     if not src.is_dir():
         return
     if dry_run:
@@ -647,155 +633,101 @@ def copy_dir_contents(src: Path, dest: Path, dry_run: bool, skip: str | None = N
             continue
         target = dest / item.name
         if item.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(item, target)
+            shutil.copytree(item, target, dirs_exist_ok=True)
         else:
             shutil.copy2(item, target)
 
 
-def copy_skill_tree(src: Path, dest: Path, dry_run: bool) -> None:
-    """Copy one skill folder, skipping evals/."""
-    if dry_run:
-        log(f"would sync {src}/ -> {dest}/ (without evals/)")
-        return
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        if item.name == "evals":
-            continue
-        target = dest / item.name
-        if item.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(item, target)
-        else:
-            shutil.copy2(item, target)
-
-
-def agents_for(fields: dict) -> tuple[str, ...]:
+def resolve_agents(fields: dict) -> tuple[str, ...]:
     raw = fields.get("agents")
     if not raw:
         return SYNCED
-    if isinstance(raw, str):
-        parts = [p.strip() for p in raw.split(",") if p.strip()]
-    elif isinstance(raw, list):
-        parts = [str(p) for p in raw]
-    else:
-        parts = list(SYNCED)
+    if not isinstance(raw, list):
+        die(f"agents must be a YAML list, got {type(raw).__name__}: {raw!r}")
+    parts = [str(p) for p in raw]
     bad = [p for p in parts if p not in SYNCED]
     if bad:
         die(f"unknown agents {bad}; expected subset of {list(SYNCED)}")
     return tuple(parts) if parts else SYNCED
 
 
-def prune_skills(
-    known: set[str],
-    dest: Path,
-    label: str,
-    removed_dir: Path,
-    keep: set[str],
-    dry_run: bool,
-) -> None:
-    if not dest.is_dir():
-        return
-    for item in sorted(dest.iterdir()):
-        if item.name.startswith("."):
-            continue
-        if not (item.is_symlink() or item.is_dir()):
-            continue
-        if item.name in known or item.name in keep:
-            continue
-        if dry_run:
-            log(f"would remove stale skill {item}")
-            continue
-        target = removed_dir / label / item.name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(item), str(target))
-        log(f"removed stale skill {item} -> {target}")
-
-
-def cmd_sync(args: argparse.Namespace) -> int:
+def cmd_sync(paths: Paths, args: argparse.Namespace) -> int:
     dry_run = args.dry_run
-    if not AGENTS_DIR.is_dir():
-        die(f"missing {AGENTS_DIR}")
-    registry = read_registry()
-    repo_skills = [s for s in list_repo_skills() if (s / "SKILL.md").is_file()]
-    externals = [(n, f) for n, f in sorted(registry.items()) if source_info(f)]
+    if not paths.agents_dir.is_dir():
+        die(f"missing {paths.agents_dir}")
+    registry = read_registry(paths)
+    repo_skills = [s for s in list_repo_skills(paths) if (s / "SKILL.md").is_file()]
+    externals = [(n, f) for n, f in sorted(registry.items()) if read_source(f)]
     if not repo_skills and not externals:
-        die(f"no skills in {SKILLS_DIR} or {REGISTRY.name}; refusing to prune")
+        die(f"no skills in {paths.skills_dir} or {paths.registry.name}")
 
-    agents_home = resolve_home("AGENTS_HOME", ".agents")
-    codex_home = resolve_home("CODEX_HOME", ".codex")
-    claude_home = resolve_home("CLAUDE_HOME", ".claude")
-    grok_home = resolve_home("GROK_HOME", ".grok")
-    pi_home = resolve_home("PI_HOME", ".pi")
+    agents_home = resolve_home_var("AGENTS_HOME", ".agents")
+    codex_home = resolve_home_var("CODEX_HOME", ".codex")
+    claude_home = resolve_home_var("CLAUDE_HOME", ".claude")
+    grok_home = resolve_home_var("GROK_HOME", ".grok")
+    pi_home = resolve_home_var("PI_HOME", ".pi")
 
-    log(f"entrypoint: {AGENTS_DIR}")
+    log(f"entrypoint: {paths.agents_dir}")
     log(f"codex:  {codex_home}")
     log(f"agents: {agents_home}")
     log(f"claude: {claude_home}")
     log(f"grok:   {grok_home}")
     log(f"pi:     {pi_home}")
 
-    keep = read_keep_list()
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    # Prefer ~/.local/share/skills for continuity with earlier skill-cli / tests.
-    removed_dir = xdg_data() / "skills" / f"removed-{stamp}-{os.getpid()}"
-
-    known = {s.name for s in repo_skills}
-    known.update(n for n, _ in externals)
     skill_dests = {
         "agents": agents_home / "skills",
         "codex": codex_home / "skills",
         "claude": claude_home / "skills",
         "grok": grok_home / "skills",
     }
-    for label, dest in skill_dests.items():
-        prune_skills(known, dest, label, removed_dir, keep, dry_run)
 
-    # Local skills (folders under agents/skills/).
     for skill in repo_skills:
         fields = registry.get(skill.name, {})
-        for label in agents_for(fields):
+        for label in resolve_agents(fields):
             if label not in skill_dests:
                 continue
-            copy_skill_tree(skill, skill_dests[label] / skill.name, dry_run)
+            copy_dir_contents(skill, skill_dests[label] / skill.name, dry_run, skip="evals")
 
-    # External skills (registry-only; fetch into cache, then copy).
+    failed_externals: list[str] = []
     for name, fields in externals:
-        src = source_info(fields)
+        src = read_source(fields)
         assert src is not None
-        if dry_run:
-            cached = peek_external_skill_dir(name, src)
-            if cached is None:
-                log(
-                    f"would fetch {src['url']}@{src['pin']}"
-                    + (f" path={src['path']}" if src.get("path") else "")
-                    + f" then sync {name}"
-                )
+        try:
+            if dry_run:
+                content = peek_external_skill_dir(name, src)
+                if content is None:
+                    log(
+                        f"would fetch {src['url']}@{src['pin']}"
+                        + (f" path={src['path']}" if src.get("path") else "")
+                        + f" then sync {name}"
+                    )
+                    continue
             else:
-                for label in agents_for(fields):
-                    if label in skill_dests:
-                        copy_skill_tree(cached, skill_dests[label] / name, dry_run=True)
+                content = resolve_external_skill_dir(name, src, fetch=True)
+        except FetchError as exc:
+            warn(str(exc))
+            failed_externals.append(name)
             continue
-        content = external_skill_dir(name, src, fetch=True)
-        for label in agents_for(fields):
+        for label in resolve_agents(fields):
             if label not in skill_dests:
                 continue
-            copy_skill_tree(content, skill_dests[label] / name, dry_run=False)
+            copy_dir_contents(content, skill_dests[label] / name, dry_run, skip="evals")
 
-    prompts = AGENTS_DIR / "prompts"
+    prompts = paths.agents_dir / "prompts"
     if has_real_files(prompts):
         copy_dir_contents(prompts, codex_home / "prompts", dry_run)
         copy_dir_contents(prompts, claude_home / "prompts", dry_run)
 
-    copy_dir_contents(AGENTS_DIR / "codex", codex_home, dry_run)
-    copy_dir_contents(AGENTS_DIR / "claude/commands", claude_home / "commands", dry_run)
-    copy_dir_contents(AGENTS_DIR / "claude/roles", claude_home / "agents", dry_run)
-    copy_path(AGENTS_DIR / "claude/CLAUDE.md", claude_home / "CLAUDE.md", dry_run)
-    copy_path(AGENTS_DIR / "claude/settings.json", claude_home / "settings.json", dry_run)
-    copy_dir_contents(REPO_ROOT / ".pi", pi_home, dry_run)
+    copy_dir_contents(paths.agents_dir / "codex", codex_home, dry_run)
+    copy_dir_contents(paths.agents_dir / "claude/commands", claude_home / "commands", dry_run)
+    copy_dir_contents(paths.agents_dir / "claude/roles", claude_home / "agents", dry_run)
+    copy_path(paths.agents_dir / "claude/CLAUDE.md", claude_home / "CLAUDE.md", dry_run)
+    copy_path(paths.agents_dir / "claude/settings.json", claude_home / "settings.json", dry_run)
+    copy_dir_contents(paths.repo_root / ".pi", pi_home, dry_run)
 
+    if failed_externals:
+        log(f"done with errors: failed externals: {', '.join(failed_externals)}")
+        return 1
     log("done")
     return 0
 
@@ -961,17 +893,17 @@ def parse_grok_record(u, name, line, r) -> None:
 
 
 def count_usage_by_agent() -> dict[str, Usage]:
-    claude = resolve_home("CLAUDE_HOME", ".claude")
-    codex = resolve_home("CODEX_HOME", ".codex")
+    claude = resolve_home_var("CLAUDE_HOME", ".claude")
+    codex = resolve_home_var("CODEX_HOME", ".codex")
     sources = {
         "claude": [(claude / "projects/**/*.jsonl", parse_claude_record)],
         "codex": [
             (codex / "sessions/**/*.jsonl", parse_codex_record),
             (codex / "archived_sessions/*.jsonl", parse_codex_record),
         ],
-        "pi": [(resolve_home("PI_HOME", ".pi") / "agent/sessions/**/*.jsonl", parse_pi_record)],
-        "omp": [(home() / ".omp/agent/sessions/**/*.jsonl", parse_pi_record)],
-        "grok": [(resolve_home("GROK_HOME", ".grok") / "sessions/**/updates.jsonl", parse_grok_record)],
+        "pi": [(resolve_home_var("PI_HOME", ".pi") / "agent/sessions/**/*.jsonl", parse_pi_record)],
+        "omp": [(Path.home() / ".omp/agent/sessions/**/*.jsonl", parse_pi_record)],
+        "grok": [(resolve_home_var("GROK_HOME", ".grok") / "sessions/**/updates.jsonl", parse_grok_record)],
     }
     result: dict[str, Usage] = {}
     for agent, parts in sources.items():
@@ -982,11 +914,10 @@ def count_usage_by_agent() -> dict[str, Usage]:
     return result
 
 
-def build_report() -> dict:
-    registry = read_registry()
+def build_report(paths: Paths) -> dict:
+    registry = read_registry(paths)
     copies = list_installed()
     usage = count_usage_by_agent()
-    keep = read_keep_list()
     newest = max((u.last for u in usage.values() if u.last), default=None)
     cutoff = None
     if newest:
@@ -1008,19 +939,21 @@ def build_report() -> dict:
     skills: list[dict] = []
     declared: set[str] = set()
 
-    def append_skill(name: str, skill_md: Path | None, fields: dict, problems: list[str], evals: bool) -> None:
+    def append_skill(
+        name: str, skill_md: Path | None, fields: dict, problems: list[str], evals: bool
+    ) -> None:
         declared.add(name)
         repo_hash = hash_file(skill_md) if skill_md and skill_md.is_file() else None
-        src = source_info(fields)
+        src = read_source(fields)
         where = {}
-        for label in agents_for(fields):
+        for label in resolve_agents(fields):
             entries = copies.get(label, {})
             if name not in entries:
                 where[label] = "missing"
             elif entries[name] is None:
                 where[label] = "hollow"
             elif repo_hash is None:
-                where[label] = "ok"  # installed; source of truth not cached yet
+                where[label] = "not fetched" if src else "ok"
             else:
                 where[label] = "ok" if hash_file(entries[name]) == repo_hash else "drift"
         skills.append({
@@ -1034,7 +967,7 @@ def build_report() -> dict:
             **summarize_usage(name),
         })
 
-    for skill in list_repo_skills():
+    for skill in list_repo_skills(paths):
         fields = registry.get(skill.name, {})
         path = skill / "SKILL.md"
         append_skill(
@@ -1048,13 +981,16 @@ def build_report() -> dict:
     for name, fields in sorted(registry.items()):
         if name in declared:
             continue
-        src = source_info(fields)
+        src = read_source(fields)
         if not src:
             continue
         cached = peek_external_skill_dir(name, src)
         problems: list[str] = []
-        if not src.get("pin"):
+        pin = src.get("pin") or ""
+        if not pin:
             problems.append("source.pin missing")
+        elif not SHA_RE.match(str(pin)):
+            problems.append("source.pin must be a 40-char commit SHA")
         append_skill(
             name,
             (cached / "SKILL.md") if cached else None,
@@ -1068,14 +1004,11 @@ def build_report() -> dict:
         for name, path in sorted(entries.items()):
             if name in declared:
                 continue
-            kept = name in keep
             orphans.append({
                 "name": name,
                 "root": str(list_skill_roots()[label]),
                 "agent": label,
                 "hollow": path is None,
-                "kept": kept,
-                "pruned": label in SYNCED and not kept,
                 **summarize_usage(name),
             })
 
@@ -1085,7 +1018,7 @@ def build_report() -> dict:
     }
     return {
         "host": os.uname().nodename,
-        "entrypoint": str(AGENTS_DIR),
+        "entrypoint": str(paths.agents_dir),
         "logs": logs,
         "dormant_after_days": DORMANT_DAYS,
         "skills": skills,
@@ -1118,11 +1051,9 @@ def print_report(rep: dict) -> None:
             f"{s['last_used'] or '-':10}  {', '.join(notes)}"
         )
     if rep["orphans"]:
-        print("\ninstalled but not in the registry:")
+        print("\ninstalled but not in the registry (left alone by sync):")
         for o in rep["orphans"]:
-            tags = [o["agent"]] + (["kept"] if o["kept"] else [])
-            tags += (["no SKILL.md"] if o["hollow"] else [])
-            tags += ["skill-cli moves it"] if o["pruned"] else []
+            tags = [o["agent"]] + (["no SKILL.md"] if o["hollow"] else [])
             print(
                 f"  {o['name']:22} {o['usage']:8} {o['total']:>5}  "
                 f"{o['last_used'] or '-':10}  {', '.join(tags)}"
@@ -1134,8 +1065,8 @@ def print_report(rep: dict) -> None:
     )
 
 
-def cmd_status(args: argparse.Namespace) -> int:
-    rep = build_report()
+def cmd_status(paths: Paths, args: argparse.Namespace) -> int:
+    rep = build_report(paths)
     if args.json:
         print(json.dumps(rep, indent=1))
     else:
@@ -1145,16 +1076,16 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # --- eval -----------------------------------------------------------------
 
-def cmd_eval(args: argparse.Namespace) -> int:
-    evals = SKILLS_DIR / args.name / "evals"
+def cmd_eval(paths: Paths, args: argparse.Namespace) -> int:
+    evals = paths.skills_dir / args.name / "evals"
     runner = evals / "run"
-    if not (SKILLS_DIR / args.name / "SKILL.md").is_file():
+    if not (paths.skills_dir / args.name / "SKILL.md").is_file():
         print(f"{PROG}: no skill named {args.name!r}", file=sys.stderr)
         return 2
     if not os.access(runner, os.X_OK):
         print(f"{PROG}: {runner} is missing or not executable", file=sys.stderr)
         return 2
-    env = dict(os.environ, SKILL_DIR=str(SKILLS_DIR / args.name))
+    env = dict(os.environ, SKILL_DIR=str(paths.skills_dir / args.name))
     return subprocess.run([str(runner), *args.rest], cwd=evals, env=env).returncode
 
 
@@ -1185,7 +1116,7 @@ def build_parser() -> argparse.ArgumentParser:
     add = sub.add_parser("add", help="create a local skill or register an external one")
     add.add_argument("name", help="skill name (lowercase-hyphen)")
     add.add_argument("--source", help="git URL for an external skill")
-    add.add_argument("--pin", help="commit SHA (preferred) or tag")
+    add.add_argument("--pin", help="40-char commit SHA")
     add.add_argument("--path", help="subdir inside the repo that contains SKILL.md")
 
     rem = sub.add_parser("remove", help="delete skill folder + registry entry (repo only)")
@@ -1201,9 +1132,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    configure(resolve_entrypoint(args.entrypoint))
+    paths = Paths.from_entrypoint(resolve_entrypoint(args.entrypoint))
     if args.command is None:
-        return cmd_status(argparse.Namespace(json=False))
+        return cmd_status(paths, argparse.Namespace(json=False))
     handlers = {
         "sync": cmd_sync,
         "status": cmd_status,
@@ -1213,7 +1144,7 @@ def main(argv: list[str] | None = None) -> int:
         "remove": cmd_remove,
         "eval": cmd_eval,
     }
-    return handlers[args.command](args)
+    return handlers[args.command](paths, args)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,6 @@ entrypoint = "~/code/dotfiles/agents"   # Mac
 
 Or `SKILL_CLI_ENTRYPOINT` / `--entrypoint`. No config → CLI exits with the exact file to create.
 
-Optional keep list: `~/.config/skill-cli/keep-skills` (legacy `skills/` and `agent-sync/` paths still read).
-
 Needs `uv` and `git` (git only for external skills).
 
 ## Commands
@@ -24,14 +22,14 @@ uv run --script agents/skill-cli/skill-cli status [--json]
 uv run --script agents/skill-cli/skill-cli check
 uv run --script agents/skill-cli/skill-cli registry
 uv run --script agents/skill-cli/skill-cli add NAME
-uv run --script agents/skill-cli/skill-cli add NAME --source URL --pin REF [--path SUBDIR]
+uv run --script agents/skill-cli/skill-cli add NAME --source URL --pin SHA [--path SUBDIR]
 uv run --script agents/skill-cli/skill-cli remove NAME
 uv run --script agents/skill-cli/skill-cli eval NAME [args]
 ```
 
-`add` / `remove` only change the repo (`agents/skills/` + `skills.yaml`). `sync` alone updates `~/.agents`, `~/.codex`, `~/.claude`, `~/.grok` (copy, never symlink; skips `evals/`).
+`add` / `remove` only change the repo (`agents/skills/` + `skills.yaml`). `sync` alone updates `~/.agents`, `~/.codex`, `~/.claude`, `~/.grok` (copy, never symlink; skips `evals/`). Sync only adds/updates — it never deletes local skills that are not in the repo.
 
-External skills are registry-only (`source.url` + `source.pin`, optional `source.path`). Sync fetches them into `${XDG_CACHE_HOME:-~/.cache}/skill-cli/` and copies out; nothing is vendored under `agents/skills/`.
+External skills are registry-only (`source.url` + `source.pin` as a 40-char commit SHA, optional `source.path`). Sync fetches them into `${XDG_CACHE_HOME:-~/.cache}/skill-cli/` and copies out; nothing is vendored under `agents/skills/`. A failed external fetch is reported and the rest of sync continues (exit non-zero).
 
 ```
 python3 -m unittest discover -s agents/skill-cli/tests -v
