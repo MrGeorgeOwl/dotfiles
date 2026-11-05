@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import os
 from pathlib import Path
-import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from typing import NamedTuple
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skill-cli"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "skill-cli"
 HOME_VARS = ("AGENTS_HOME", "CODEX_HOME", "CLAUDE_HOME", "GROK_HOME", "PI_HOME")
 XDG_VARS = ("XDG_CONFIG_HOME", "XDG_CACHE_HOME")
 ENV_DROP = HOME_VARS + XDG_VARS + ("SKILL_CLI_ENTRYPOINT", "XDG_DATA_HOME")
@@ -26,18 +25,11 @@ class GitSkillRepo(NamedTuple):
 
 
 def load_skill_cli():
-    """Import the skill-cli script as a module for unit-testing helpers."""
-    # Extensionless PEP 723 script — pin SourceFileLoader explicitly.
-    loader = importlib.machinery.SourceFileLoader("skill_cli_under_test", str(SCRIPT))
-    spec = importlib.util.spec_from_file_location(
-        "skill_cli_under_test", SCRIPT, loader=loader,
-    )
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    import sys
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    """Import skill_cli.cli for unit-testing helpers."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from skill_cli import cli
+    return cli
 
 
 def make_git_skill_repo(
@@ -88,9 +80,8 @@ class SkillCliFixture(unittest.TestCase):
         self.home = self.root / "home"
         self.home.mkdir()
         self.entry = self.root / "repo/agents"
-        self.script = self.entry / "skill-cli/skill-cli"
-        self.script.parent.mkdir(parents=True)
-        shutil.copy2(SCRIPT, self.script)
+        self.entry.mkdir(parents=True)
+        self.script = SCRIPT  # package entrypoint in place (not a lone copy)
         self.env = {k: v for k, v in os.environ.items() if k not in ENV_DROP}
         self.env["HOME"] = str(self.home)
         self.env["SKILL_CLI_ENTRYPOINT"] = str(self.entry)
