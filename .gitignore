@@ -7,6 +7,6 @@ lazy-lock.json
 TASKS.md
 .DS_Store
 
-# Skill evals run locally only (.agents/skill-doctor eval <skill>)
+# Skill evals run locally only (.agents/skills-cli eval <skill>)
 .agents/skills/*/evals/
 __pycache__/

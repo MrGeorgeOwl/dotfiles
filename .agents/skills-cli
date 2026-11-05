@@ -1,0 +1,976 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Manage shared agent skills. One CLI for sync, status, registry, and evals.
+
+  skills-cli sync [--dry-run]     copy repo + external skills (and agent config)
+  skills-cli status [--json]      usage, drift, orphans on this machine
+  skills-cli check                lint .agents/skills.yaml (for tests/CI)
+  skills-cli registry             regenerate skills.yaml; keep human fields
+  skills-cli add PKG SKILL[#REF]  register an external skill
+  skills-cli add NAME             ensure a repo skill is in the registry
+  skills-cli remove NAME          drop a registry entry (external, or after deleting the folder)
+  skills-cli eval NAME [args]     run skills/NAME/evals/run with SKILL_DIR set
+
+OS-agnostic: same behaviour on macOS and Linux. Copies files; never symlinks.
+Repo is the source of truth. A skill's evals/ folder stays local and is not synced.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+AGENTS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = AGENTS_DIR.parent
+SKILLS_DIR = AGENTS_DIR / "skills"
+REGISTRY = AGENTS_DIR / "skills.yaml"
+PROG = "skills-cli"
+
+HUMAN_FIELDS = ("status", "purpose", "source", "ref", "agents")
+STATUSES = ("active", "experimental", "deprecated")
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+SKILL_PATH = re.compile(r"/([A-Za-z0-9._:~-]+)/SKILL\.md")
+DORMANT_DAYS = 60
+SYNCED = ("agents", "codex", "claude", "grok")
+OBSERVED = ("pi", "omp")
+
+
+# --- paths ----------------------------------------------------------------
+
+def home() -> Path:
+    return Path.home()
+
+
+def resolve_home(var: str, default: str) -> Path:
+    return Path(os.environ[var]) if os.environ.get(var) else home() / default
+
+
+def xdg_config() -> Path:
+    return resolve_home("XDG_CONFIG_HOME", ".config")
+
+
+def xdg_data() -> Path:
+    return resolve_home("XDG_DATA_HOME", ".local/share")
+
+
+def list_skill_roots() -> dict[str, Path]:
+    return {
+        "agents": resolve_home("AGENTS_HOME", ".agents") / "skills",
+        "codex": resolve_home("CODEX_HOME", ".codex") / "skills",
+        "claude": resolve_home("CLAUDE_HOME", ".claude") / "skills",
+        "grok": resolve_home("GROK_HOME", ".grok") / "skills",
+        "pi": resolve_home("PI_HOME", ".pi") / "agent/skills",
+        "omp": home() / ".omp/agent/skills",
+    }
+
+
+def keep_list_paths() -> list[Path]:
+    """New path first; fall back to the agent-sync location."""
+    return [
+        xdg_config() / "skills/keep-skills",
+        xdg_config() / "agent-sync/keep-skills",
+    ]
+
+
+def read_keep_list() -> set[str]:
+    for path in keep_list_paths():
+        if not path.is_file():
+            continue
+        lines = (line.strip() for line in path.read_text(errors="replace").splitlines())
+        return {line for line in lines if line and not line.startswith("#")}
+    return set()
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"{PROG}: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def log(msg: str) -> None:
+    print(f"{PROG}: {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"{PROG}: warning: {msg}", file=sys.stderr)
+
+
+# --- SKILL.md / registry --------------------------------------------------
+
+def read_frontmatter(path: Path) -> dict[str, str]:
+    text = path.read_text(errors="replace")
+    match = re.match(r"---\r?\n(.*?)\r?\n---", text, re.S)
+    fields: dict[str, str] = {}
+    for line in (match.group(1).splitlines() if match else []):
+        key, sep, value = line.partition(":")
+        if sep and key.strip() in ("name", "description"):
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            fields[key.strip()] = value
+    return fields
+
+
+def hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
+
+
+def quote(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def list_repo_skills() -> list[Path]:
+    if not SKILLS_DIR.is_dir():
+        return []
+    return sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
+def find_problems(skill_dir: Path) -> list[str]:
+    path = skill_dir / "SKILL.md"
+    if not path.is_file():
+        return ["no SKILL.md"]
+    meta, found = read_frontmatter(path), []
+    name, desc = meta.get("name", ""), meta.get("description", "")
+    if name != skill_dir.name:
+        found.append(f"frontmatter name {name!r} != folder name")
+    if not NAME_RE.match(skill_dir.name) or len(skill_dir.name) > 64:
+        found.append("folder name must be lowercase-hyphen, <= 64 chars")
+    if not desc or len(desc) > 1024:
+        found.append("description missing or > 1024 chars")
+    elif desc[0] in ">|":
+        found.append("description must be one line")
+    return found
+
+
+def read_registry() -> dict[str, dict]:
+    """Parse the flat list-of-mappings YAML that render_registry writes."""
+    entries: dict[str, dict] = {}
+    current = None
+    if not REGISTRY.is_file():
+        return entries
+    for line in REGISTRY.read_text().splitlines():
+        match = re.match(r"^(- |  )(\w+): (.*)$", line)
+        if not match:
+            continue
+        lead, key, raw = match.groups()
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            value = raw.strip()
+        if lead == "- " and key == "name":
+            current = entries.setdefault(value, {})
+        elif current is not None:
+            current[key] = value
+    return entries
+
+
+def is_external(fields: dict) -> bool:
+    return bool(fields.get("source"))
+
+
+def render_registry(old: dict[str, dict] | None = None) -> str:
+    old = old if old is not None else read_registry()
+    out = [
+        "# Shared agent skills. Generated by `.agents/skills-cli registry`.",
+        "# Edit status, purpose, source, ref, agents.",
+        "# For repo skills, name and description come from SKILL.md and are overwritten.",
+        "# External skills (with source) stay until you remove them; description is optional.",
+    ]
+    repo_names = {s.name for s in list_repo_skills() if (s / "SKILL.md").is_file()}
+    # Repo skills first, then external ones that aren't also folders.
+    ordered = sorted(repo_names) + sorted(
+        n for n, f in old.items() if is_external(f) and n not in repo_names
+    )
+    for name in ordered:
+        human = old.get(name, {})
+        if name in repo_names:
+            desc = read_frontmatter(SKILLS_DIR / name / "SKILL.md").get("description", "")
+            source = ""
+            ref = ""
+        else:
+            desc = human.get("description") or ""
+            source = human.get("source") or ""
+            ref = human.get("ref") or ""
+        out += [
+            f"- name: {quote(name)}",
+            f"  description: {quote(desc)}",
+            f"  status: {quote(human.get('status') or 'active')}",
+            f"  purpose: {quote(human.get('purpose') or '')}",
+        ]
+        if source:
+            out.append(f"  source: {quote(source)}")
+            out.append(f"  ref: {quote(ref)}")
+        agents = human.get("agents")
+        if agents:
+            out.append(f"  agents: {quote(agents)}")
+    return "\n".join(out) + "\n"
+
+
+def find_registry_errors() -> list[str]:
+    errors: list[str] = []
+    registry = read_registry()
+    repo = {s.name: s for s in list_repo_skills()}
+    for name, skill in repo.items():
+        errors += [f"{name}: {p}" for p in find_problems(skill)]
+    for name, fields in registry.items():
+        if fields.get("status") not in STATUSES:
+            errors.append(f"{name}: status must be one of {', '.join(STATUSES)}")
+        if is_external(fields):
+            if not NAME_RE.match(name) or len(name) > 64:
+                errors.append(f"{name}: name must be lowercase-hyphen, <= 64 chars")
+            if name in repo:
+                errors.append(f"{name}: external source collides with .agents/skills/{name}")
+            if "/" not in str(fields.get("source") or ""):
+                errors.append(f"{name}: source must look like owner/repo")
+        elif name not in repo:
+            errors.append(f"{name}: listed in registry but no .agents/skills/{name}/ and no source")
+    for name in repo:
+        if name not in registry and (repo[name] / "SKILL.md").is_file():
+            errors.append(f"{name}: missing from {REGISTRY.name}; run {PROG} registry")
+    if not REGISTRY.is_file() or REGISTRY.read_text() != render_registry(registry):
+        errors.append(f"{REGISTRY.name} is out of date; run {PROG} registry")
+    return errors
+
+
+def write_registry(old: dict[str, dict] | None = None) -> None:
+    REGISTRY.write_text(render_registry(old))
+
+
+def cmd_registry(args: argparse.Namespace) -> int:
+    if not args.check:
+        write_registry()
+        log(f"wrote {REGISTRY}")
+    errors = find_registry_errors()
+    for error in errors:
+        print(f"{PROG}: {error}", file=sys.stderr)
+    return 1 if errors else 0
+
+
+def cmd_check(_args: argparse.Namespace) -> int:
+    return cmd_registry(argparse.Namespace(check=True))
+
+
+# --- add / remove ---------------------------------------------------------
+
+def parse_skill_spec(spec: str) -> tuple[str, str]:
+    """Split 'name' or 'name#ref' into (name, ref)."""
+    if "#" in spec:
+        name, ref = spec.split("#", 1)
+    else:
+        name, ref = spec, ""
+    if not name or "/" in name or name.startswith("."):
+        die(f"bad skill name {name!r}")
+    if "#" in spec and not ref:
+        die("empty ref after '#'")
+    return name, ref
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    registry = read_registry()
+    tokens = args.tokens
+    if len(tokens) == 1:
+        name = tokens[0]
+        if not (SKILLS_DIR / name / "SKILL.md").is_file():
+            die(f"no repo skill named {name!r}; pass PACKAGE SKILL[#REF] for an external skill")
+        if name not in registry:
+            registry[name] = {"status": "active", "purpose": ""}
+        write_registry(registry)
+        log(f"registered repo skill {name}")
+        return 0
+    if len(tokens) != 2:
+        die("usage: add NAME  or  add PACKAGE SKILL[#REF]")
+    package, spec = tokens
+    name, ref = parse_skill_spec(spec)
+    if "/" not in package:
+        die(f"package must look like owner/repo, got {package!r}")
+    if (SKILLS_DIR / name).exists():
+        die(f"external skill {name!r} collides with .agents/skills/{name}")
+    entry = registry.get(name, {})
+    entry["status"] = entry.get("status") or "active"
+    entry["purpose"] = entry.get("purpose") or ""
+    entry["description"] = entry.get("description") or ""
+    entry["source"] = package
+    entry["ref"] = ref
+    registry[name] = entry
+    write_registry(registry)
+    label = f"{package}@{ref}" if ref else package
+    log(f"registered external skill {name} from {label}")
+    return 0
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    registry = read_registry()
+    name = args.name
+    if name not in registry:
+        die(f"{name!r} is not in the registry", code=2)
+    if (SKILLS_DIR / name).exists() and not is_external(registry[name]):
+        die(f"{name!r} still has .agents/skills/{name}/; delete the folder, then run {PROG} registry")
+    del registry[name]
+    write_registry(registry)
+    log(f"removed {name} from {REGISTRY.name}")
+    return 0
+
+
+# --- sync -----------------------------------------------------------------
+
+def has_real_files(directory: Path) -> bool:
+    if not directory.is_dir():
+        return False
+    for path in directory.rglob("*"):
+        if path.is_file() and path.name != "README.md":
+            return True
+    return False
+
+
+def copy_path(src: Path, dest: Path, dry_run: bool) -> None:
+    if not src.exists():
+        return
+    if dry_run:
+        log(f"would copy {src} -> {dest}")
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_dir():
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+    else:
+        shutil.copy2(src, dest)
+
+
+def copy_dir_contents(src: Path, dest: Path, dry_run: bool, skip: str | None = None) -> None:
+    if not src.is_dir():
+        return
+    if dry_run:
+        log(f"would sync {src}/ -> {dest}/")
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in list(src.iterdir()):
+        if skip and item.name == skip:
+            continue
+        target = dest / item.name
+        if item.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
+def copy_skill_tree(src: Path, dest: Path, dry_run: bool) -> None:
+    """Copy one skill folder, skipping evals/."""
+    if dry_run:
+        log(f"would sync {src}/ -> {dest}/ (without evals/)")
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name == "evals":
+            continue
+        target = dest / item.name
+        if item.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
+def copy_repo_skills(dest: Path, dry_run: bool) -> None:
+    if not SKILLS_DIR.is_dir():
+        return
+    if dry_run:
+        log(f"would sync {SKILLS_DIR}/ -> {dest}/ (without evals/)")
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for skill in list_repo_skills():
+        copy_skill_tree(skill, dest / skill.name, dry_run=False)
+
+
+def agents_for(fields: dict) -> tuple[str, ...]:
+    raw = fields.get("agents")
+    if not raw:
+        return SYNCED
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+    elif isinstance(raw, list):
+        parts = [str(p) for p in raw]
+    else:
+        parts = list(SYNCED)
+    bad = [p for p in parts if p not in SYNCED]
+    if bad:
+        die(f"unknown agents {bad}; expected subset of {list(SYNCED)}")
+    return tuple(parts) if parts else SYNCED
+
+
+def prune_skills(
+    known: set[str],
+    dest: Path,
+    label: str,
+    removed_dir: Path,
+    keep: set[str],
+    dry_run: bool,
+) -> None:
+    if not dest.is_dir():
+        return
+    for item in sorted(dest.iterdir()):
+        if item.name.startswith("."):
+            continue
+        # Only directories or symlinks are skills; move a symlink, not its target.
+        if not (item.is_symlink() or item.is_dir()):
+            continue
+        if item.name in known or item.name in keep:
+            continue
+        if dry_run:
+            log(f"would remove stale skill {item}")
+            continue
+        target = removed_dir / label / item.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(item), str(target))
+        log(f"removed stale skill {item} -> {target}")
+
+
+def fetch_external_skill(package: str, name: str, ref: str, fetch_root: Path) -> Path | None:
+    """Fetch one external skill into fetch_root; return its SKILL.md parent or None."""
+    source = f"{package}#{ref}" if ref else package
+    if shutil.which("npx") is None:
+        warn(f"npx not found; skipped external skill {name} from {package}"
+             + (f"@{ref}" if ref else ""))
+        return None
+    work = fetch_root / name
+    work.mkdir(parents=True, exist_ok=True)
+    log_path = fetch_root / f"{name}.log"
+    env = {
+        **os.environ,
+        "DISABLE_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    cmd = ["npx", "-y", "skills", "add", source, "--skill", name, "--copy", "-y"]
+    try:
+        with open(log_path, "w") as log_fh:
+            result = subprocess.run(
+                cmd, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                stdout=log_fh, stderr=subprocess.STDOUT, check=False,
+            )
+    except OSError as exc:
+        warn(f"could not fetch external skill {name} from {package}: {exc}")
+        return None
+    fetched = work / ".agents" / "skills" / name
+    if result.returncode != 0 or not (fetched / "SKILL.md").is_file():
+        label = f"{package}@{ref}" if ref else package
+        warn(f"could not fetch external skill {name} from {label}; kept installed copies")
+        try:
+            tail = log_path.read_text(errors="replace").splitlines()[-5:]
+            for line in tail:
+                print(line, file=sys.stderr)
+        except OSError:
+            pass
+        return None
+    return fetched
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    dry_run = args.dry_run
+    if not AGENTS_DIR.is_dir():
+        die(f"missing {AGENTS_DIR}")
+    repo_skills = [s for s in list_repo_skills() if s.is_dir()]
+    if not repo_skills:
+        die(f"no skills in {SKILLS_DIR}; refusing to prune")
+
+    registry = read_registry()
+    # Validate external entries that collide with repo folders before touching disk.
+    for name, fields in registry.items():
+        if is_external(fields) and (SKILLS_DIR / name).exists():
+            die(f"external skill {name!r} collides with .agents/skills/{name}")
+
+    agents_home = resolve_home("AGENTS_HOME", ".agents")
+    codex_home = resolve_home("CODEX_HOME", ".codex")
+    claude_home = resolve_home("CLAUDE_HOME", ".claude")
+    grok_home = resolve_home("GROK_HOME", ".grok")
+    pi_home = resolve_home("PI_HOME", ".pi")
+
+    log(f"source: {AGENTS_DIR}")
+    log(f"codex:  {codex_home}")
+    log(f"agents: {agents_home}")
+    log(f"claude: {claude_home}")
+    log(f"grok:   {grok_home}")
+    log(f"pi:     {pi_home}")
+
+    keep = read_keep_list()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    removed_dir = xdg_data() / "skills" / f"removed-{stamp}-{os.getpid()}"
+
+    known = {s.name for s in repo_skills}
+    external = {n: f for n, f in registry.items() if is_external(f)}
+    known |= set(external)
+
+    skill_dests = {
+        "agents": agents_home / "skills",
+        "codex": codex_home / "skills",
+        "claude": claude_home / "skills",
+        "grok": grok_home / "skills",
+    }
+    for label, dest in skill_dests.items():
+        prune_skills(known, dest, label, removed_dir, keep, dry_run)
+
+    for dest in skill_dests.values():
+        copy_repo_skills(dest, dry_run)
+
+    if external:
+        fetch_root = None if dry_run else Path(tempfile.mkdtemp(prefix="skills-cli-"))
+        try:
+            for name, fields in sorted(external.items()):
+                package = fields["source"]
+                ref = fields.get("ref") or ""
+                label = f"{package}@{ref}" if ref else package
+                targets = [skill_dests[a] for a in agents_for(fields) if a in skill_dests]
+                if dry_run:
+                    log(f"would install external skill {name} from {label}")
+                    continue
+                assert fetch_root is not None
+                fetched = fetch_external_skill(package, name, ref, fetch_root)
+                if fetched is None:
+                    continue
+                for dest in targets:
+                    dest.mkdir(parents=True, exist_ok=True)
+                    target = dest / name
+                    if target.exists():
+                        shutil.rmtree(target)
+                    shutil.copytree(fetched, target)
+                log(f"installed external skill {name} from {label}")
+        finally:
+            if fetch_root is not None:
+                shutil.rmtree(fetch_root, ignore_errors=True)
+
+    prompts = AGENTS_DIR / "prompts"
+    if has_real_files(prompts):
+        copy_dir_contents(prompts, codex_home / "prompts", dry_run)
+        copy_dir_contents(prompts, claude_home / "prompts", dry_run)
+
+    copy_dir_contents(AGENTS_DIR / "codex", codex_home, dry_run)
+    copy_dir_contents(AGENTS_DIR / "claude/commands", claude_home / "commands", dry_run)
+    copy_dir_contents(AGENTS_DIR / "claude/roles", claude_home / "agents", dry_run)
+    copy_path(AGENTS_DIR / "claude/CLAUDE.md", claude_home / "CLAUDE.md", dry_run)
+    copy_path(AGENTS_DIR / "claude/settings.json", claude_home / "settings.json", dry_run)
+    copy_dir_contents(REPO_ROOT / ".pi", pi_home, dry_run)
+
+    log("done")
+    return 0
+
+
+# --- status (was skill-doctor report) -------------------------------------
+
+def list_installed() -> dict[str, dict[str, Path | None]]:
+    result: dict[str, dict[str, Path | None]] = {}
+    for label, root in list_skill_roots().items():
+        entries: dict[str, Path | None] = {}
+        if root.is_dir():
+            for item in root.iterdir():
+                if item.name.startswith(".") or not item.is_dir():
+                    continue
+                skill = item / "SKILL.md"
+                entries[item.name] = skill if skill.is_file() else None
+        result[label] = entries
+    return result
+
+
+def parse_day(ts) -> str | None:
+    if isinstance(ts, (int, float)):
+        try:
+            return datetime.datetime.fromtimestamp(
+                ts / (1000 if ts > 1e12 else 1)
+            ).strftime("%Y-%m-%d")
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(ts or "")[:10]
+    return text if re.match(r"\d{4}-\d\d-\d\d$", text) else None
+
+
+class Usage:
+    def __init__(self) -> None:
+        self.files = 0
+        self.first: str | None = None
+        self.last: str | None = None
+        self.loads: collections.Counter = collections.Counter()
+        self.last_use: dict[str, str] = {}
+        self.seen: set = set()
+
+    def saw(self, ts) -> None:
+        t = parse_day(ts)
+        if t:
+            self.first = min(self.first or t, t)
+            self.last = max(self.last or t, t)
+
+    def add(self, skill, ts, key) -> None:
+        if not skill or key is None or key in self.seen:
+            return
+        self.seen.add(key)
+        skill = skill.split(":")[-1]
+        self.loads[skill] += 1
+        t = parse_day(ts)
+        if t:
+            self.last_use[skill] = max(self.last_use.get(skill, t), t)
+
+
+def read_records(pattern: Path):
+    for name in glob.glob(str(pattern), recursive=True):
+        try:
+            with open(name, errors="replace") as fh:
+                for line in fh:
+                    try:
+                        yield name, line, json.loads(line)
+                    except ValueError:
+                        yield name, line, None
+        except OSError:
+            continue
+
+
+def extract_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(x.get("text", "") for x in content if isinstance(x, dict))
+    return ""
+
+
+def parse_skill_path(path) -> str | None:
+    match = SKILL_PATH.search(str(path))
+    return match.group(1) if match else None
+
+
+def scan(usage: Usage, pattern: Path, handle) -> None:
+    files: set[str] = set()
+    for name, line, record in read_records(pattern):
+        files.add(name)
+        if isinstance(record, dict):
+            handle(usage, name, line, record)
+    usage.files += len(files)
+
+
+def parse_claude_record(u, name, line, r) -> None:
+    ts = r.get("timestamp")
+    u.saw(ts)
+    content = (r.get("message") or {}).get("content")
+    if r.get("type") == "assistant" and isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            args = block.get("input") or {}
+            if block.get("name") == "Skill":
+                u.add(args.get("skill"), ts, block.get("id"))
+            elif block.get("name") == "Read":
+                u.add(parse_skill_path(args.get("file_path", "")), ts, block.get("id"))
+    elif r.get("type") == "user":
+        match = re.search(
+            r"<command-name>/?([A-Za-z0-9:_-]+)</command-name>", extract_text(content)
+        )
+        if match:
+            u.add(match.group(1), ts, r.get("uuid"))
+
+
+def parse_codex_record(u, name, line, r) -> None:
+    ts = r.get("timestamp")
+    u.saw(ts)
+    payload = r.get("payload") or {}
+    if payload.get("type") != "function_call" or "SKILL.md" not in line:
+        return
+    try:
+        args = json.loads(payload.get("arguments") or "{}")
+        cmd = args.get("cmd") or args.get("command") or ""
+    except (ValueError, AttributeError):
+        cmd = payload.get("arguments") or ""
+    if isinstance(cmd, list):
+        cmd = " ".join(map(str, cmd))
+    if re.search(r"\b(cat|sed|head|nl|bat|less|tail)\b", cmd) and "find " not in cmd:
+        for match in SKILL_PATH.finditer(cmd):
+            u.add(match.group(1), ts, (payload.get("call_id"), match.group(1)))
+
+
+def parse_pi_record(u, name, line, r) -> None:
+    ts = r.get("timestamp")
+    u.saw(ts)
+    msg = r.get("message") or {}
+    content = msg.get("content")
+    if msg.get("role") == "assistant" and isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "toolCall" and block.get("name") == "read":
+                path = str((block.get("arguments") or {}).get("path", ""))
+                if path.endswith("SKILL.md"):
+                    u.add(parse_skill_path(path), ts, block.get("id"))
+    elif msg.get("role") == "toolResult":
+        match = re.search(
+            r"\[Skill file: [^\]]*?/([^/\]]+)/SKILL\.md\]", json.dumps(content)
+        )
+        if match:
+            u.add(match.group(1), ts, msg.get("toolCallId"))
+    elif msg.get("role") == "user":
+        match = re.match(r"\s*/skill:([A-Za-z0-9._-]+)", extract_text(content))
+        if match:
+            u.add(match.group(1), ts, (name, ts))
+
+
+def parse_grok_record(u, name, line, r) -> None:
+    ts = r.get("timestamp")
+    u.saw(ts)
+    update = (r.get("params") or {}).get("update") or {}
+    if update.get("sessionUpdate") == "tool_call":
+        raw = json.dumps(update.get("rawInput") or update.get("title") or "")
+        u.add(parse_skill_path(raw), ts, update.get("toolCallId"))
+
+
+def count_usage_by_agent() -> dict[str, Usage]:
+    claude = resolve_home("CLAUDE_HOME", ".claude")
+    codex = resolve_home("CODEX_HOME", ".codex")
+    sources = {
+        "claude": [(claude / "projects/**/*.jsonl", parse_claude_record)],
+        "codex": [
+            (codex / "sessions/**/*.jsonl", parse_codex_record),
+            (codex / "archived_sessions/*.jsonl", parse_codex_record),
+        ],
+        "pi": [(resolve_home("PI_HOME", ".pi") / "agent/sessions/**/*.jsonl", parse_pi_record)],
+        "omp": [(home() / ".omp/agent/sessions/**/*.jsonl", parse_pi_record)],
+        "grok": [(resolve_home("GROK_HOME", ".grok") / "sessions/**/updates.jsonl", parse_grok_record)],
+    }
+    result: dict[str, Usage] = {}
+    for agent, parts in sources.items():
+        usage = Usage()
+        for pattern, handle in parts:
+            scan(usage, pattern, handle)
+        result[agent] = usage
+    return result
+
+
+def build_report() -> dict:
+    registry = read_registry()
+    copies = list_installed()
+    usage = count_usage_by_agent()
+    keep = read_keep_list()
+    newest = max((u.last for u in usage.values() if u.last), default=None)
+    cutoff = None
+    if newest:
+        cutoff = (
+            datetime.date.fromisoformat(newest) - datetime.timedelta(days=DORMANT_DAYS)
+        ).isoformat()
+
+    def summarize_usage(name: str) -> dict:
+        loads = {agent: u.loads[name] for agent, u in usage.items() if u.loads[name]}
+        last = max((u.last_use[name] for u in usage.values() if name in u.last_use), default=None)
+        if not newest:
+            state = "unknown"
+        elif last and last >= cutoff:
+            state = "active"
+        else:
+            state = "dormant"
+        return {"loads": loads, "total": sum(loads.values()), "last_used": last, "usage": state}
+
+    skills: list[dict] = []
+    repo_names: set[str] = set()
+    for skill in list_repo_skills():
+        repo_names.add(skill.name)
+        path = skill / "SKILL.md"
+        repo_hash = hash_file(path) if path.is_file() else None
+        where = {}
+        for label in SYNCED:
+            entries = copies[label]
+            if skill.name not in entries:
+                where[label] = "missing"
+            elif entries[skill.name] is None:
+                where[label] = "hollow"
+            else:
+                where[label] = "ok" if hash_file(entries[skill.name]) == repo_hash else "drift"
+        entry = registry.get(skill.name, {})
+        skills.append({
+            "name": skill.name,
+            "status": entry.get("status", "unregistered"),
+            "source": entry.get("source") or None,
+            "problems": find_problems(skill),
+            "hash": repo_hash,
+            "copies": where,
+            "evals": (skill / "evals").is_dir(),
+            **summarize_usage(skill.name),
+        })
+
+    for name, fields in sorted(registry.items()):
+        if not is_external(fields) or name in repo_names:
+            continue
+        where = {}
+        for label in agents_for(fields):
+            entries = copies.get(label, {})
+            if name not in entries:
+                where[label] = "missing"
+            elif entries[name] is None:
+                where[label] = "hollow"
+            else:
+                where[label] = "ok"
+        skills.append({
+            "name": name,
+            "status": fields.get("status", "unregistered"),
+            "source": fields.get("source"),
+            "ref": fields.get("ref") or None,
+            "problems": [],
+            "hash": None,
+            "copies": where,
+            "evals": False,
+            **summarize_usage(name),
+        })
+        repo_names.add(name)
+
+    orphans = []
+    for label, entries in copies.items():
+        for name, path in sorted(entries.items()):
+            if name in repo_names:
+                continue
+            kept = name in keep
+            orphans.append({
+                "name": name,
+                "root": str(list_skill_roots()[label]),
+                "agent": label,
+                "hollow": path is None,
+                "kept": kept,
+                "pruned": label in SYNCED and not kept,
+                **summarize_usage(name),
+            })
+
+    logs = {
+        agent: {"files": u.files, "first": u.first, "last": u.last}
+        for agent, u in usage.items()
+    }
+    return {
+        "host": os.uname().nodename,
+        "logs": logs,
+        "dormant_after_days": DORMANT_DAYS,
+        "skills": skills,
+        "orphans": orphans,
+    }
+
+
+def print_report(rep: dict) -> None:
+    print(f"{PROG} on {rep['host']}: {len(rep['skills'])} skills in registry / {SKILLS_DIR}")
+    print("logs:")
+    for agent, loginfo in rep["logs"].items():
+        window = f"{loginfo['first']} .. {loginfo['last']}" if loginfo["files"] else "no logs"
+        print(f"  {agent:7} {loginfo['files']:>4} files  {window}")
+    print(
+        f"\n{'skill':24} {'registry':12} {'usage':8} {'loads':>5}  "
+        f"{'last used':10}  copies / notes"
+    )
+    for s in rep["skills"]:
+        bad = [f"{agent} {state}" for agent, state in s["copies"].items() if state != "ok"]
+        notes = bad or ["all copies ok"]
+        notes += s["problems"] + (["evals"] if s["evals"] else [])
+        if s.get("source"):
+            notes.append(f"external:{s['source']}" + (f"@{s['ref']}" if s.get("ref") else ""))
+        print(
+            f"{s['name']:24} {s['status']:12} {s['usage']:8} {s['total']:>5}  "
+            f"{s['last_used'] or '-':10}  {', '.join(notes)}"
+        )
+    if rep["orphans"]:
+        print("\ninstalled but not in the registry:")
+        for o in rep["orphans"]:
+            tags = [o["agent"]] + (["kept"] if o["kept"] else [])
+            tags += (["no SKILL.md"] if o["hollow"] else [])
+            tags += ["skills-cli moves it"] if o["pruned"] else []
+            print(
+                f"  {o['name']:22} {o['usage']:8} {o['total']:>5}  "
+                f"{o['last_used'] or '-':10}  {', '.join(tags)}"
+            )
+    print(
+        f"\nusage: active = loaded within {DORMANT_DAYS} days of the newest log day; "
+        "dormant = not; unknown = no logs.\n"
+        "Zero loads only means zero inside the log window above."
+    )
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    rep = build_report()
+    if args.json:
+        print(json.dumps(rep, indent=1))
+    else:
+        print_report(rep)
+    return 0
+
+
+# --- eval -----------------------------------------------------------------
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    evals = SKILLS_DIR / args.name / "evals"
+    runner = evals / "run"
+    if not (SKILLS_DIR / args.name / "SKILL.md").is_file():
+        print(f"{PROG}: no repo skill named {args.name!r}", file=sys.stderr)
+        return 2
+    if not os.access(runner, os.X_OK):
+        print(f"{PROG}: {runner} is missing or not executable", file=sys.stderr)
+        return 2
+    env = dict(os.environ, SKILL_DIR=str(SKILLS_DIR / args.name))
+    return subprocess.run([str(runner), *args.rest], cwd=evals, env=env).returncode
+
+
+# --- main -----------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=PROG, description=__doc__.split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    sync = sub.add_parser("sync", help="copy repo + external skills and agent config")
+    sync.add_argument("--dry-run", action="store_true")
+
+    status = sub.add_parser("status", help="report usage, drift, orphans")
+    status.add_argument("--json", action="store_true")
+
+    sub.add_parser("check", help="lint skills.yaml (write nothing)")
+
+    reg = sub.add_parser("registry", help="regenerate skills.yaml from SKILL.md files")
+    reg.add_argument("--check", action="store_true", help="check only; write nothing")
+
+    add = sub.add_parser("add", help="register a repo or external skill")
+    add.add_argument(
+        "tokens", nargs="+",
+        help="NAME  or  PACKAGE SKILL[#REF]",
+    )
+
+    rem = sub.add_parser("remove", help="drop a registry entry")
+    rem.add_argument("name")
+
+    ev = sub.add_parser("eval", help="run a skill's local evals/run")
+    ev.add_argument("name")
+    ev.add_argument("rest", nargs=argparse.REMAINDER)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        # Default to status so `skills-cli` alone still reports, like skill-doctor.
+        return cmd_status(argparse.Namespace(json=False))
+    handlers = {
+        "sync": cmd_sync,
+        "status": cmd_status,
+        "check": cmd_check,
+        "registry": cmd_registry,
+        "add": cmd_add,
+        "remove": cmd_remove,
+        "eval": cmd_eval,
+    }
+    return handlers[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

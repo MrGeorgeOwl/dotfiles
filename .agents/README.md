@@ -17,76 +17,74 @@ Repo-specific agent settings can still live in repository-level `.codex/` or
 `.claude/` folders when those files are meant to affect only this repository.
 For example, `.claude/settings.local.json` remains local to this repo.
 
-## Sync
+## Sync and skills CLI
 
-Run `.agents/agent-sync` after changing shared agent assets.
-It copies shared skills into `~/.agents/skills`, `~/.codex/skills`,
-`~/.claude/skills`, and `~/.grok/skills`. Pi discovers `~/.agents/skills`
-automatically, so shared skills are not also copied into `~/.pi/agent/skills`:
-separate copies with the same skill name cause Pi collision warnings. Keep that
-Pi-specific directory for unique skills. If you override `AGENTS_HOME`, configure
-Pi to discover the custom skills location.
+`.agents/skills-cli` is a uv script (Python 3.11+, stdlib only) that replaces
+`agent-sync` and `skill-doctor`. Same behaviour on macOS and Linux.
 
-It copies shared prompts into both Codex and Claude configs, then copies
-Codex-only and Claude-only assets into their matching config folders. It also
-copies the repository `.pi/` directory into `~/.pi/` (or `$PI_HOME`).
+```
+.agents/skills-cli sync [--dry-run]   # copy skills + agent config
+.agents/skills-cli status [--json]    # usage, drift, orphans
+.agents/skills-cli check              # lint skills.yaml
+.agents/skills-cli registry           # regenerate skills.yaml
+.agents/skills-cli add NAME
+.agents/skills-cli add PACKAGE SKILL[#REF]
+.agents/skills-cli remove NAME
+.agents/skills-cli eval NAME [args]
+```
 
-Skills are mirrored. Before copying, the sync removes any top-level skill folder
-(or symlink) in `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or
-`~/.grok/skills` that is not in `.agents/skills`. Removed skills are moved, not
-deleted, to `~/.local/share/agent-sync/removed-<timestamp>-<pid>/<agent>/<skill>`
-(`$XDG_DATA_HOME` is respected), and each one is printed. Symlinks are moved
-as links; their targets are never touched. Hidden entries such as
-`~/.codex/skills/.system`, plain files, and `~/.pi/agent/skills` are left alone.
-To keep a local-only skill, add its name on its own line to
-`~/.config/agent-sync/keep-skills` (`$XDG_CONFIG_HOME` is respected; lines
-starting with `#` are ignored). `--dry-run` prints `would remove stale skill`
-lines without changing anything.
+`sync` copies shared skills into `~/.agents/skills`, `~/.codex/skills`,
+`~/.claude/skills`, and `~/.grok/skills` (never symlinks; each skill's `evals/`
+is skipped). Pi discovers `~/.agents/skills`, so skills are not also copied into
+`~/.pi/agent/skills`. It also copies prompts, Codex and Claude assets, and
+`.pi/` → `~/.pi/` (or `$PI_HOME`).
 
-Other destination-only files (commands, agents, prompts, configs) are not
-deleted. After upgrading from the old sync, compare existing `~/.pi/agent/skills/<name>` directories with their
-`~/.agents/skills/<name>` counterparts and move verified duplicate directories
-to a backup outside either skills directory. Preserve unique files or local
-changes. Symlinks to the same skill files do not cause Pi collisions.
-Run `/reload` in Pi after cleanup.
+Skills are mirrored. Before copying, `sync` moves any top-level skill folder
+(or symlink) in those four homes that is not in the registry to
+`~/.local/share/skills/removed-<timestamp>-<pid>/<agent>/<skill>`
+(`$XDG_DATA_HOME` is respected). Hidden entries, plain files, and
+`~/.pi/agent/skills` are left alone. To keep a local-only skill, add its name
+to `~/.config/skills/keep-skills` (`$XDG_CONFIG_HOME`; `#` comments ignored).
+The old `~/.config/agent-sync/keep-skills` path is still read if the new one
+is missing.
 
-Use `.agents/agent-sync --dry-run` to preview destinations.
-Run `python3 -m unittest discover -s .agents/tests -v` for isolated sync and
-skill-doctor tests.
+### Registry and external skills
 
-## Skills registry and skill-doctor
+`skills.yaml` is the one list. Repo skills take `name`/`description` from each
+`SKILL.md`; you edit `status`, `purpose`, and optionally `agents` (a subset of
+`agents,codex,claude,grok`). External skills add `source` (`owner/repo`) and
+optional `ref` (branch, tag, or full 40-char SHA). `sync` fetches them with
+`npx -y skills add <source>[#<ref>] --skill <name> --copy -y` and copies the
+result into the same four homes. A failed fetch warns and keeps installed
+copies. A name that also exists under `.agents/skills/` aborts.
 
-`skills.yaml` lists every shared skill once. `name` and `description` are
-copied from each `SKILL.md`; `status` (`active`, `experimental`, `deprecated`)
-and `purpose` are yours to edit. After adding a skill or changing a
-description, run `.agents/skill-doctor registry`; it keeps your edits. The
-tests run `.agents/skill-doctor registry --check`, which fails when the file is
-stale, a frontmatter `name` does not match its folder, a `description` is
-not on one line, or a folder has no `SKILL.md`.
+```
+.agents/skills-cli add humanlayer/skills show-me#4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329
+.agents/skills-cli sync
+```
 
-Run `.agents/skill-doctor` on each machine to see, without changing anything:
+`check` fails when the registry is stale, frontmatter is wrong, a status is
+unknown, or an external entry collides with a repo folder. Tests run `check`
+against the real repo.
 
-- loads per skill from the Claude Code, Codex, pi, omp and Grok session logs,
-  with each log's date window (a load means the skill was read, not that it
-  helped; zero loads only covers that window);
-- `usage`: `active` if loaded within 60 days of the newest log day,
-  `dormant` if not, `unknown` if the machine has no logs;
-- installed copies whose `SKILL.md` differs from the repo (`drift`) or is
-  missing;
-- skills installed but not in the repo. Those in the agents, codex, claude
-  and grok folders are tagged `agent-sync moves it` unless they are in
-  `keep-skills`; agent-sync never touches the pi and omp folders.
+### Status report
 
-Add `--json` for machine-readable output.
+`status` (read-only) shows loads per skill from Claude Code, Codex, pi, omp
+and Grok session logs, `active`/`dormant`/`unknown` usage, copy drift, and
+skills installed but not in the registry. Synced orphans are tagged
+`skills-cli moves it` unless listed in `keep-skills`; pi and omp are listed
+but never pruned. Add `--json` for machine-readable output.
 
 ### Local evals
 
-Evals live in `skills/<name>/evals/` and stay on your machine: the folder is
-gitignored and agent-sync does not copy it. Put an executable `evals/run`
-there (it can call `claude plugin eval`, a regex check script, or anything
-else) and run it with `.agents/skill-doctor eval <name> [args]`. It runs in the
-`evals/` folder with `SKILL_DIR` set, and its exit code is returned. Evals that
-call a model cost money on each run.
+Evals live in `skills/<name>/evals/`, are gitignored, and are not synced.
+Put an executable `evals/run` there and run `.agents/skills-cli eval <name>`.
+It runs in `evals/` with `SKILL_DIR` set.
+
+```
+uv run --script .agents/skills-cli check
+python3 -m unittest discover -s .agents/tests -v
+```
 
 ## Merge the latest base into the current branch
 
@@ -96,7 +94,7 @@ conflicts autonomously. After verification, it completes the merge and pushes
 the current branch. It never rebases or force-pushes, and asks only for safety
 blockers or unresolved decisions.
 
-After running `.agents/agent-sync`:
+After running `.agents/skills-cli sync`:
 
 | Agent | Command | Explicit base example |
 | --- | --- | --- |
