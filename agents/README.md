@@ -5,8 +5,8 @@ Repo state for shared agent skills and defaults. Local install targets stay
 
 ## Layout
 
-- `skills/` — every skill (local and vendored external), one folder each
-- `skills.yaml` — registry (source of truth for status/purpose/source/ref/agents)
+- `skills/` — local skills, one folder each (externals are not stored here)
+- `skills.yaml` — registry (status/purpose/source/agents; externals use source.url+pin)
 - `skill-cli/` — `skill-cli` uv script, tests, short README
 - `codex/`, `claude/`, `prompts/` — agent-specific defaults synced by `skill-cli sync`
 - `../.pi/` — Pi config synced to `~/.pi/`
@@ -35,6 +35,11 @@ Shared skill `skills/merge-base`. After `skill-cli sync`:
 
 Run `/reload` in Pi; restart Claude Code if the command is not yet visible.
 Grok reloads skills when their files change.
+
+## External skills
+
+Declared in `skills.yaml` with `source.url` / `source.pin` / optional `source.path`.
+`skill-cli sync` fetches into `~/.cache/skill-cli/` and installs alongside local skills.
 
 ## Imported sources
 

@@ -212,55 +212,102 @@ class SkillCliSyncTests(unittest.TestCase):
         self.assertNotIn("stale skill", output)
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
 
-    def vendor_external(self, name="tool", body="vendored\n", source="owner/repo", ref=""):
-        dest = self.entry / "skills" / name
-        dest.mkdir(parents=True)
-        (dest / "SKILL.md").write_text(
-            f"---\nname: {name}\ndescription: Vendored {name}\n---\n{body}"
+    def make_git_skill_repo(self, name="tool", body="from-git\n", subdir=None):
+        """Create a local bare-ish git repo with a skill; return (url, pin, path)."""
+        src = self.root / f"ext-{name}"
+        if src.exists():
+            shutil.rmtree(src)
+        skill_rel = Path(subdir) if subdir else Path(name)
+        skill_dir = src / skill_rel
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: External {name}\n---\n{body}"
         )
+        subprocess.run(["git", "init"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+        pin = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        url = src.resolve().as_uri()
+        path = str(skill_rel) if subdir or True else ""
+        return url, pin, str(skill_rel)
+
+    def register_external(self, name, url, pin, path, body_desc=None):
         registry = self.entry / "skills.yaml"
+        desc = body_desc or f"External {name}"
         registry.write_text(
             registry.read_text()
             + f'- name: "{name}"\n'
-            f'  description: "Vendored {name}"\n'
+            f'  description: "{desc}"\n'
             f'  status: "active"\n'
             f'  purpose: ""\n'
-            f'  source: "{source}"\n'
-            f'  ref: "{ref}"\n'
+            f"  source:\n"
+            f'    url: "{url}"\n'
+            f'    pin: "{pin}"\n'
+            f'    path: "{path}"\n'
         )
 
-    def test_vendored_external_skill_is_copied_like_any_other(self):
-        self.vendor_external()
+    def test_external_skill_fetched_and_synced(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.register_external("tool", url, pin, path)
         output = self.run_sync()
         for home in SKILL_HOMES:
             text = (self.home / home / "skills/tool/SKILL.md").read_text()
-            self.assertIn("vendored", text)
+            self.assertIn("from-git", text)
         self.assert_shared_skills(self.home / home for home in SKILL_HOMES)
-        self.assertIn("entrypoint:", output)
-
-    def test_prune_keeps_vendored_external_skill(self):
-        self.vendor_external()
-        self.make_skill(".claude", "tool", "old\n")
-        self.run_sync()
-        self.assertEqual(self.removed_dirs(), [])
-        self.assertIn(
-            "vendored",
-            (self.home / ".claude/skills/tool/SKILL.md").read_text(),
-        )
-
-    def test_sync_does_not_call_npx(self):
-        """Sync only copies vendored skills; fetch happens at add time."""
-        self.vendor_external()
-        bin_dir = self.root / "no-npx"
+        self.assertIn("fetching", output)
+        # Second sync is offline (cache hit).
+        bin_dir = self.root / "no-git-needed"
         bin_dir.mkdir()
         for tool in ("uv", "python3", "mkdir", "cp", "mv", "rm"):
             which = shutil.which(tool)
             if which:
                 (bin_dir / tool).symlink_to(which)
-        self.env["PATH"] = f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"
+        # Keep git available via /usr/bin; just confirm no error and no re-fetch log required
+        output2 = self.run_sync()
+        self.assertNotIn("fetching", output2)
+
+    def test_prune_keeps_external_skill(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.register_external("tool", url, pin, path)
+        self.make_skill(".claude", "tool", "old\n")
+        self.run_sync()
+        self.assertEqual(self.removed_dirs(), [])
+        self.assertIn(
+            "from-git",
+            (self.home / ".claude/skills/tool/SKILL.md").read_text(),
+        )
+
+    def test_dry_run_skips_fetch_when_uncached(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.register_external("tool", url, pin, path)
+        output = self.run_sync("--dry-run")
+        self.assertIn("would fetch", output)
+        self.assertEqual(list(self.home.iterdir()), [])
+        cache = Path(self.env["XDG_CACHE_HOME"]) / "skill-cli"
+        self.assertFalse(cache.exists() and any(cache.rglob("SKILL.md")))
+
+    def test_pin_mismatch_errors(self):
+        url, pin, path = self.make_git_skill_repo()
+        bad = "0" * 40
+        self.register_external("tool", url, bad, path)
         result = self.run_sync(check=False)
-        self.assertEqual(result.returncode, 0)
-        self.assertTrue((self.home / ".agents/skills/tool/SKILL.md").is_file())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(
+            "pin mismatch" in result.stderr or "could not fetch" in result.stderr
+            or "could not checkout" in result.stderr,
+            result.stderr,
+        )
+
+    def test_missing_skill_md_errors(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.register_external("tool", url, pin, "no-such-dir")
+        result = self.run_sync(check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no SKILL.md", result.stderr)
 
 
 if __name__ == "__main__":

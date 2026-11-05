@@ -14,7 +14,7 @@ Or `SKILL_CLI_ENTRYPOINT` / `--entrypoint`. No config → CLI exits with the exa
 
 Optional keep list: `~/.config/skill-cli/keep-skills` (legacy `skills/` and `agent-sync/` paths still read).
 
-Needs `uv`. External `add` needs `npx`.
+Needs `uv` and `git` (git only for external skills).
 
 ## Commands
 
@@ -24,12 +24,14 @@ uv run --script agents/skill-cli/skill-cli status [--json]
 uv run --script agents/skill-cli/skill-cli check
 uv run --script agents/skill-cli/skill-cli registry
 uv run --script agents/skill-cli/skill-cli add NAME
-uv run --script agents/skill-cli/skill-cli add PACKAGE SKILL[#REF]
+uv run --script agents/skill-cli/skill-cli add NAME --source URL --pin REF [--path SUBDIR]
 uv run --script agents/skill-cli/skill-cli remove NAME
 uv run --script agents/skill-cli/skill-cli eval NAME [args]
 ```
 
-`add` / `remove` only change the repo (`agents/skills/` + `skills.yaml`). `sync` alone updates `~/.agents`, `~/.codex`, `~/.claude`, `~/.grok` (copy, never symlink; skips `evals/`). External skills are vendored into `agents/skills/<name>/` at add time; sync just copies them.
+`add` / `remove` only change the repo (`agents/skills/` + `skills.yaml`). `sync` alone updates `~/.agents`, `~/.codex`, `~/.claude`, `~/.grok` (copy, never symlink; skips `evals/`).
+
+External skills are registry-only (`source.url` + `source.pin`, optional `source.path`). Sync fetches them into `${XDG_CACHE_HOME:-~/.cache}/skill-cli/` and copies out; nothing is vendored under `agents/skills/`.
 
 ```
 python3 -m unittest discover -s agents/skill-cli/tests -v

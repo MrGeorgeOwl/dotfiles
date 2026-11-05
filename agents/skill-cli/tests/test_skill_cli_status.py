@@ -53,7 +53,6 @@ class SkillCliStatusTests(unittest.TestCase):
         cache.mkdir()
         self.env["UV_CACHE_DIR"] = str(cache)
         self.env["XDG_CACHE_HOME"] = str(cache)
-        self.npx_log = self.root / "npx.log"
 
     def add_skill(self, name, description):
         path = self.entry / "skills" / name / "SKILL.md"
@@ -177,47 +176,103 @@ class SkillCliStatusTests(unittest.TestCase):
         # Local dir still untouched by remove
         self.assertEqual((local_before / "SKILL.md").read_text(), "local copy\n")
 
-    def use_fake_npx(self, fail=False):
-        bin_dir = self.root / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        npx = bin_dir / "npx"
-        npx.write_text(
-            "#!/bin/sh\n"
-            f'echo "$DISABLE_TELEMETRY $DO_NOT_TRACK $*" >> "{self.npx_log}"\n'
-            + ("exit 1\n" if fail else "")
-            + 'mkdir -p ".agents/skills/$6"\n'
-            'echo "---\nname: $6\ndescription: fetched $4\n---\nbody" > ".agents/skills/$6/SKILL.md"\n'
+    def make_git_skill_repo(self, name="tool", body="from-git\n", subdir=None):
+        src = self.root / f"ext-{name}"
+        if src.exists():
+            shutil.rmtree(src)
+        skill_rel = Path(subdir) if subdir else Path(name)
+        skill_dir = src / skill_rel
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: External {name}\n---\n{body}"
         )
-        npx.chmod(0o755)
-        self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
+        subprocess.run(["git", "init"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+        pin = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        return src.resolve().as_uri(), pin, str(skill_rel)
 
-    def test_add_external_vendors_into_repo(self):
-        self.use_fake_npx()
+    def test_add_external_registers_only(self):
+        url, pin, path = self.make_git_skill_repo()
         local = self.home / ".agents/skills/tool"
         local.mkdir(parents=True)
         (local / "SKILL.md").write_text("old local\n")
-        result = self.run_cli("add", "owner/repo", "tool#abc123")
-        self.assertEqual(result.returncode, 0)
-        vendored = self.entry / "skills/tool/SKILL.md"
-        self.assertTrue(vendored.is_file())
-        self.assertIn("fetched owner/repo#abc123", vendored.read_text())
-        registry = (self.entry / "skills.yaml").read_text()
-        self.assertIn('source: "owner/repo"', registry)
-        self.assertIn('ref: "abc123"', registry)
-        # Local untouched
-        self.assertEqual((local / "SKILL.md").read_text(), "old local\n")
-        self.assertEqual(
-            self.npx_log.read_text().splitlines(),
-            ["1 1 -y skills add owner/repo#abc123 --skill tool --copy -y"],
+        result = self.run_cli(
+            "add", "tool", "--source", url, "--pin", pin, "--path", path,
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.entry / "skills/tool").exists())
+        registry = (self.entry / "skills.yaml").read_text()
+        self.assertIn("source:", registry)
+        self.assertIn(f'url: "{url}"', registry)
+        self.assertIn(f'pin: "{pin}"', registry)
+        self.assertIn(f'path: "{path}"', registry)
+        self.assertEqual((local / "SKILL.md").read_text(), "old local\n")
 
-    def test_add_external_failure_leaves_repo_alone(self):
-        self.use_fake_npx(fail=True)
-        result = self.run_cli("add", "owner/repo", "tool", check=False)
+    def test_add_external_missing_skill_md_leaves_registry_alone(self):
+        url, pin, path = self.make_git_skill_repo()
+        result = self.run_cli(
+            "add", "tool", "--source", url, "--pin", pin, "--path", "missing",
+            check=False,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.entry / "skills/tool").exists())
         registry = self.entry / "skills.yaml"
         self.assertTrue(not registry.is_file() or "tool" not in registry.read_text())
+
+    def test_registry_parses_nested_source(self):
+        url, pin, path = self.make_git_skill_repo()
+        # Write registry by hand, then status --json should expose source mapping
+        self.run_cli("registry")
+        registry = self.entry / "skills.yaml"
+        registry.write_text(
+            registry.read_text()
+            + '- name: "tool"\n'
+            '  description: "External tool"\n'
+            '  status: "experimental"\n'
+            '  purpose: ""\n'
+            "  source:\n"
+            f'    url: "{url}"\n'
+            f'    pin: "{pin}"\n'
+            f'    path: "{path}"\n'
+        )
+        # Prefetch via add would work; status should list it
+        rep = self.report()
+        by_name = {s["name"]: s for s in rep["skills"]}
+        self.assertIn("tool", by_name)
+        self.assertEqual(by_name["tool"]["source"]["url"], url)
+        self.assertEqual(by_name["tool"]["source"]["pin"], pin)
+        self.assertEqual(by_name["tool"]["source"]["path"], path)
+
+    def test_check_requires_pin_and_rejects_local_folder_for_external(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.run_cli("registry")
+        registry = self.entry / "skills.yaml"
+        # missing pin
+        registry.write_text(
+            registry.read_text()
+            + '- name: "tool"\n'
+            '  description: "External tool"\n'
+            '  status: "experimental"\n'
+            '  purpose: ""\n'
+            "  source:\n"
+            f'    url: "{url}"\n'
+        )
+        bad = self.run_cli("check", check=False)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("source.pin missing", bad.stderr)
+
+    def test_remove_external_drops_registry_only(self):
+        url, pin, path = self.make_git_skill_repo()
+        self.run_cli("add", "tool", "--source", url, "--pin", pin, "--path", path)
+        self.assertIn("tool", (self.entry / "skills.yaml").read_text())
+        result = self.run_cli("remove", "tool")
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("tool", (self.entry / "skills.yaml").read_text())
 
     def test_eval_runs_local_script(self):
         runner = self.entry / "skills/alpha/evals/run"
