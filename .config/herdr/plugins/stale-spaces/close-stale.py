@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Close spaces whose agents have been idle and unchanged for two hours.
+"""Close spaces that have been idle and unchanged for two hours.
 
 A space's clock restarts whenever it is active, focused, was the last focused
-one, or its newest state_change_seq moves. Spaces without agents are never
-closed, and a fresh startup forgets the clocks so downtime does not count.
+one, or its newest state_change_seq moves (a space without agents counts as
+seq 0). A fresh startup forgets the clocks so downtime does not count.
 """
 import json
 import os
@@ -31,8 +31,8 @@ with lock_runs():
     workspaces = call("workspace.list")["workspaces"]
     focused = next((w["workspace_id"] for w in workspaces if w["focused"]), None)
     spaces = {}
-    for ws in (w["workspace_id"] for w in workspaces if w["workspace_id"] in rank):
-        active, seq = rank[ws]
+    for ws in (w["workspace_id"] for w in workspaces):
+        active, seq = rank.get(ws, (False, 0))
         entry = state["spaces"].get(ws)
         if active or ws in (focused, state["focused"]) or entry is None or entry[0] != seq:
             spaces[ws] = [seq, now]

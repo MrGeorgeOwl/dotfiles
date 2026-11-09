@@ -150,9 +150,9 @@ theme cannot leave the wrong wallpaper behind.
 to match. It runs on startup, on agent status changes and through the
 `agent-recency.apply` action.
 
-`.config/herdr/plugins/stale-spaces` closes spaces whose agents are idle and
-unchanged for 2 hours. Spaces without agents and the focused space are left
-alone. Herdr has no timers, so the sweep runs on agent status changes, focus
+`.config/herdr/plugins/stale-spaces` closes spaces that are idle and unchanged
+for 2 hours, including spaces without agents. Spaces with a working or blocked
+agent, the focused space and the one just left are kept. Herdr has no timers, so the sweep runs on agent status changes, focus
 changes, startup and the `stale-spaces.close` action. It imports the ranking
 from the sibling agent-recency directory, so install both side by side, for
 example with `herdr plugin link`. Test it with

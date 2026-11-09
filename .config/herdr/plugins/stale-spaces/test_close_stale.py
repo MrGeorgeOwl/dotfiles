@@ -73,7 +73,8 @@ class CloseStale(unittest.TestCase):
             "working": ([("w1", False), ("w2", True)], [("w1", "working", 5)], {"w1": (5, 3)}, {}, []),
             "focused": ([("w1", True)], [("w1", "idle", 5)], {"w1": (5, 3)}, {}, []),
             "previously focused": ([("w1", False), ("w2", True)], [("w1", "idle", 5)], {"w1": (5, 3)}, {"focused": "w1"}, []),
-            "no agents": ([("w1", False), ("w2", True)], [], {"w1": (5, 3)}, {}, []),
+            "no agents for 3h": ([("w1", False), ("w2", True)], [], {"w1": (0, 3)}, {}, ["w1"]),
+            "agents just left": ([("w1", False), ("w2", True)], [], {"w1": (5, 3)}, {}, []),
         }
         for name, (workspaces, agents, spaces, extra, closed) in cases.items():
             with self.subTest(name):
