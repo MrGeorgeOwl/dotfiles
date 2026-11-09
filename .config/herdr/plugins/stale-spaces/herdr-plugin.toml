@@ -1,0 +1,21 @@
+id = "stale-spaces"
+name = "Stale spaces"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["python3", "close-stale.py"]
+
+[[actions]]
+id = "close"
+title = "Close spaces idle for 2 hours"
+command = ["python3", "close-stale.py"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "close-stale.py"]
+
+[[events]]
+on = "workspace.focused"
+command = ["python3", "close-stale.py"]
