@@ -9,38 +9,45 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
+from typing import NamedTuple
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent-recency"))
+sys.path.append(str(Path(__file__).resolve().parent.parent / "agent-recency"))
 from recency import STATE_DIR, call, lock_runs, rank_spaces
 
 STALE_AFTER = 2 * 60 * 60
-STATE_FILE = os.path.join(STATE_DIR, "seen.json")
+STATE_FILE = Path(STATE_DIR) / "seen.json"
+
+
+class Clock(NamedTuple):
+    seq: int
+    since: float
 
 
 def load_state():
-    if os.environ.get("HERDR_PLUGIN_EVENT") == "startup" or not os.path.exists(STATE_FILE):
-        return {"focused": None, "spaces": {}}
-    with open(STATE_FILE) as file:
-        return json.load(file)
+    if os.environ.get("HERDR_PLUGIN_EVENT") == "startup" or not STATE_FILE.exists():
+        return None, {}
+    state = json.loads(STATE_FILE.read_text())
+    return state["focused"], {ws: Clock(*clock) for ws, clock in state["spaces"].items()}
 
 
 with lock_runs():
-    state = load_state()
+    last_focused, clocks = load_state()
     now = time.time()
     rank = rank_spaces()
     workspaces = call("workspace.list")["workspaces"]
     focused = next((w["workspace_id"] for w in workspaces if w["focused"]), None)
-    spaces = {}
+    kept = {}
     for ws in (w["workspace_id"] for w in workspaces):
         active, seq = rank.get(ws, (False, 0))
-        entry = state["spaces"].get(ws)
-        if active or ws in (focused, state["focused"]) or entry is None or entry[0] != seq:
-            spaces[ws] = [seq, now]
-        elif now - entry[1] >= STALE_AFTER:
-            call("workspace.close", {"workspace_id": ws})
-            print(f"closed: {ws}")
-        else:
-            spaces[ws] = entry
-    with open(STATE_FILE + ".tmp", "w") as file:
-        json.dump({"focused": focused, "spaces": spaces}, file)
-    os.replace(STATE_FILE + ".tmp", STATE_FILE)
+        clock = clocks.get(ws, Clock(seq, now))
+        if active or ws in (focused, last_focused) or clock.seq != seq:
+            clock = Clock(seq, now)
+        if now - clock.since < STALE_AFTER:
+            kept[ws] = clock
+            continue
+        call("workspace.close", {"workspace_id": ws})
+        print(f"closed: {ws}")
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"focused": focused, "spaces": kept}))
+    tmp.replace(STATE_FILE)
