@@ -142,3 +142,18 @@ it the module does nothing.
 It does nothing when the desktop is unknown, the tools are missing, or the
 theme is already active. It runs before `wallpaper`, so applying the global
 theme cannot leave the wrong wallpaper behind.
+
+## Herdr plugins
+
+`.config/herdr/plugins/agent-recency` reorders Herdr spaces by agent activity
+(active agents first, then by newest state change) and sorts the Agents sidebar
+to match. It runs on startup, on agent status changes and through the
+`agent-recency.apply` action.
+
+`.config/herdr/plugins/stale-spaces` closes spaces that are idle and unchanged
+for 2 hours, including spaces without agents. Spaces with a working or blocked
+agent, the focused space and the one just left are kept. Herdr has no timers, so the sweep runs on agent status changes, focus
+changes, startup and the `stale-spaces.close` action. It imports the ranking
+from the sibling agent-recency directory, so install both side by side, for
+example with `herdr plugin link`. Test it with
+`python3 -m unittest discover -s .config/herdr/plugins/stale-spaces -v`.
