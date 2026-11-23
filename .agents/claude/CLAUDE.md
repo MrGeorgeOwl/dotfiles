@@ -33,9 +33,14 @@ use Sonnet 5.5 subagents with medium effort.
 
 Give the worker self-contained briefs: the goal, the files and packages in play, the project conventions it
 must honor (check the project `CLAUDE.md` and `justfile/Makefile` first), and what "done" means, including the
-lint/test recipes to run. Prefer several small rounds over one big one.
+lint/test recipes to run and green `/george-code-review` and `/test-sanitization` checks. Prefer several small rounds over one big one.
 
 ## Reviewing
+
+Verification includes `/george-code-review` and `/test-sanitization` on the branch diff, run by the worker
+and again by you. Both must come back green: no blocking findings. The worker may make additional fixes
+beyond its brief to get them green, then re-runs both checks after each fix round until they pass. Treat
+a red check as not done.
 
 Read the diff yourself before accepting it. Send another round whenever there is room for
 simplification, a cleaner seam, reuse of something that already exists, or the same result with less

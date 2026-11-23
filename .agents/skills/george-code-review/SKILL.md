@@ -4,7 +4,7 @@ description: Review a branch, PR, or diff against George's code review checklist
 ---
 # George's code review
 
-Review only. Never edit, commit or push unless George asks. Tests are NOT reviewed here.
+Tests are NOT reviewed here.
 
 ## 1. Scope
 1. Diff the branch against its merge-base (include untracked files). Use that same diff throughout.
