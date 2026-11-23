@@ -1,0 +1,17 @@
+{
+  "zoom": 1,
+  "sounds": {
+    "enabled": false
+  },
+  "font_ligatures": false,
+  "terminal_line_height": 1,
+  "terminal_cell_width": 1,
+  "terminal_scroll_speed": 1,
+  "ui_font": "JetBrains Mono",
+  "telemetry": false,
+  "minimum_contrast": 1,
+  "theme": {
+    "light": "solarized-light",
+    "dark": "miasma"
+  }
+}

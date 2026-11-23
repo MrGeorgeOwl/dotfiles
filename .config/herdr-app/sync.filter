@@ -1,0 +1,13 @@
+- *.d.ts
+- jsconfig.json
++ /keys.json
++ /settings.json
++ /programs.json
++ /themes/
++ /themes/*.json
++ /mods/
++ /mods/panel-files/
++ /mods/panel-files/*
++ /mods/panel-changes/
++ /mods/panel-changes/*
+- *
