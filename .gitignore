@@ -6,3 +6,4 @@ lazy-lock.json
 .config/btop/btop.log
 TASKS.md
 .DS_Store
+.config/chameleon/current
