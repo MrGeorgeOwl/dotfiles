@@ -14,9 +14,6 @@
 - name: herdr
   description: Control Herdr, a terminal multiplexer for coding agents. Use only when the user explicitly mentions Herdr or asks to use Herdr to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work.
   purpose: ''
-- name: herdr-worktree
-  description: Create a Herdr git worktree. Use whenever the user asks to create or start a worktree in Herdr, or to work a Jira ticket in its own Herdr worktree
-  purpose: ''
 - name: merge-base
   description: Merge the latest base into the current branch, resolve conflicts, verify, and push without rebasing.
   purpose: ''
