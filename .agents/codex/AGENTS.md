@@ -15,6 +15,13 @@ this repository.
 - Keep a checklist in TASKS.md. Tick each item when it's done, and add
 anything new you find.
 
+## Herdr
+
+I do most of my agent work in the Herdr app. When I use terminal-layout words such as "open in a new
+tab", "make a pane for it", "split", "workspace" or "run an agent there", I mean Herdr unless the
+context says otherwise. Do that work natively in Herdr: use the `herdr` skill and the Herdr CLI, not
+background shells, tmux, new terminal windows or subagents.
+
 ## Delegating
 
 Give the worker self-contained briefs: the goal, the files and packages in play, the project conventions it
