@@ -2,6 +2,9 @@
 - name: create-gh-pr
   description: Use when the user asks Codex to create, open, draft, or publish a GitHub pull request with gh, especially when the PR body should be reviewed or approved before creation.
   purpose: ''
+- name: delegate
+  description: Hand a side job (an improvement, refactor or out-of-scope fix found mid-task) to a new, unmonitored agent session in its own Herdr tab or space, then carry on with the current task. Use when the user says delegate, spin off or "do this in another session/tab". Not for subagents or work whose result the current task needs.
+  purpose: ''
 - name: george-code-review
   description: Review a branch, PR, or diff against George's code review checklist, mostly for Python backend. Use when George asks for a review. Tests are out of scope; use test-sanitization for them.
   purpose: ''
