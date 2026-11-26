@@ -8,9 +8,8 @@ Central storage for reusable agent assets.
 - `codex/` contains Codex-specific defaults.
 - `claude/` contains Claude-specific defaults, including `CLAUDE.md`.
 - `codex/AGENTS.md` and `claude/CLAUDE.md` hold the same engineering rules; keep them in sync.
+  `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md` are symlinks to them.
 - `claude/commands/` contains Claude slash-command prompts.
-- `claude/roles/` contains Claude role/subagent prompts.
-- `prompts/` is reserved for shared prompts that are not tied to one agent's file format.
 - `../.pi/` contains Pi configuration for `~/.pi/` (for example, web-search provider settings).
 
 Repo-specific agent settings can still live in repository-level `.codex/` or
